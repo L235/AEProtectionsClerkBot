@@ -312,9 +312,9 @@ def format_entry(ev: dict, topic_code: str) -> str:
     date_str = to_mediawiki_timestamp(ts_value)
     action_str = build_action_string(ev)
 
-    # Wrap potentially hazardous parameters in <nowiki>...</nowiki>
-    action_param = mediawiki_param_nowiki(action_str)
-    summary_param = mediawiki_param_nowiki(comment)
+    # formerly wrap potentially hazardous parameters in <nowiki>...</nowiki>; now omitting
+    action_param = action_str
+    summary_param = comment
 
     # topic may be empty string
     topic_part = topic_code
