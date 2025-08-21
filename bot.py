@@ -168,7 +168,7 @@ class TopicDetector:
     (3) If a CTOP specific page appears, return the corresponding code.
     """
 
-    def __init__(self, codes: List[str], specific_pages: Dict[str, str]):
+    def __init__(self, codes: List[str], specific_pages: Dict[str, str], override_strings: Dict[str, str]):
         self.codes = sorted([c.lower() for c in codes], key=len, reverse=True)
         # Normalize specific pages for case-insensitive match and common dash variants
         def _norm(s: str) -> str:
@@ -189,6 +189,7 @@ class TopicDetector:
         }
         # Regex to catch WP:CT/<code> with optional spaces around the colon and slash
         self._ctop_shortcut_re = re.compile(r"(?i)wp\s*:\s*ct\s*/\s*([A-Za-z-]+)")
+        self.override_strings = override_strings
 
     def detect(self, comment: str) -> str:
         comment = (comment or "")
@@ -210,6 +211,11 @@ class TopicDetector:
         for code, page in self.specific_pages.items():
             if page in lower:
                 return code
+            
+        # Heuristic (4): override_strings
+        for override, code in self.override_strings.items():
+            if override in lower:
+                return code
 
         return ""
 
@@ -219,9 +225,10 @@ def load_topics(path: str) -> TopicDetector:
         data = json.load(f)
     codes = data.get("codes", [])
     specific_pages = data.get("specific_pages", {})
+    override_strings = data.get("override_strings", {})
     if not codes or not specific_pages:
         raise ValueError("ctop_topics.json missing required keys 'codes' or 'specific_pages'")
-    return TopicDetector(codes=codes, specific_pages=specific_pages)
+    return TopicDetector(codes=codes, specific_pages=specific_pages, override_strings=override_strings)
 
 
 # --------- Core logic ---------

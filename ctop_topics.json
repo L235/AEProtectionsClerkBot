@@ -50,5 +50,20 @@
     "sa": "Wikipedia:Contentious topics/South Asia",
     "tt": "Wikipedia:Contentious topics/The Troubles",
     "ya": "Wikipedia:Contentious topics/Yasuke"
+  },
+  "override_strings": {
+    "gensex": "gg",
+    "ctop/ai": "a-i",
+    "ct/ai": "a-i",
+    "ct/aa": "a-a",
+    "blpct": "blp",
+    "ipa": "sa",
+    "pia": "a-i",
+    "arbirp": "irp",
+    "balkans": "ee",
+    "arbind": "sa",
+    "palestine-israel": "a-i",
+    "gs-aa": "a-a",
+    "india, pakistan, and afghanistan": "sa"
   }
 }
