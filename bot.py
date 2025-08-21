@@ -345,43 +345,6 @@ def format_entry(ev: dict, topic_code: str) -> str:
     )
 
 
-def ensure_header_footer(text: str) -> Tuple[str, bool]:
-    """
-    Ensure the page has '{{/header}}' immediately before the *first* {{/entry}} and
-    '{{/footer}}' immediately after the *last* {{/entry}}. If there are no entries,
-    the text is returned unchanged. Idempotent: if either marker already exists
-    anywhere on the page, we do not add another.
-    """
-    # Find all entry occurrences using the same pattern family the bot writes.
-    matches: List[Match[str]] = list(ENTRY_LOGID_RE.finditer(text))
-    if not matches:
-        return text, False
-
-    changed = False
-    out = text
-
-    # Insert header before first entry if not present anywhere.
-    if HEADER_MARK not in out:
-        first = matches[0].start()
-        # Add a newline before header unless we're at BOF or already on a fresh line.
-        leading_nl = "" if first == 0 or out[max(0, first - 1)] == "\n" else "\n"
-        insertion = leading_nl + HEADER_MARK + "\n"
-        out = out[:first] + insertion + out[first:]
-        changed = True
-        # Offsets changed; recompute match positions
-        matches = list(ENTRY_LOGID_RE.finditer(out))
-
-    # Insert footer after last entry if not present anywhere.
-    if FOOTER_MARK not in out:
-        last_end = matches[-1].end()
-        # Ensure footer starts on its own line.
-        prefix_nl = "" if (last_end > 0 and out[last_end - 1] == "\n") else "\n"
-        out = out[:last_end] + prefix_nl + FOOTER_MARK + "\n" + out[last_end:]
-        changed = True
-
-    return out, changed
-
-
 def main() -> int:
     # Load topic detection data
     try:
@@ -432,47 +395,44 @@ def main() -> int:
     # Build the new page content in-memory so we can do ONE edit that:
     # - appends new entries
     # - (optionally) updates the timestamp
-    # - (idempotently) ensures header/footer markers
     new_text = text
-    summary_parts: List[str] = []
 
     # Update timestamp in the same edit if requested.
     if UPDATE_TIMESTAMP:
         now_line = "Last updated: " + to_mediawiki_sig_timestamp(datetime.now(tz=timezone.utc))
         new_text, n = LAST_UPDATED_RE.subn(now_line, new_text, count=1)
-        if n == 1:
-            summary_parts.append("update timestamp")
-        else:
+        if n != 1:
             log.warning("Did not find 'Last updated' line to update.")
 
+    # Remove existing footer before appending new entries
+    new_text = new_text.replace(FOOTER_MARK, "")
+    
     # Append new entries (if any).
     if new_entries:
         append_block = "\n" + "\n".join(new_entries) + "\n"
         new_text = new_text + append_block
-        summary_parts.insert(0, f"log {len(new_entries)} arbitration enforcement protection action(s)")
     else:
         log.info("No new AE protection actions to append.")
 
-    # Ensure header/footer around the entries region.
-    # Run this after potential append so markers wrap newly added entries too.
-    new_text, header_footer_changed = ensure_header_footer(new_text)
-    if header_footer_changed:
-        summary_parts.append("ensure header/footer")
+    # Add footer back at the end after all entries
+    new_text = new_text + FOOTER_MARK + "\n"
 
     # If nothing changed at all, bail out.
     if new_text == text:
-        log.info("Nothing to do: no new entries, no timestamp update, and header/footer already present.")
+        log.info("Nothing to do: no new entries and no timestamp update.")
         return 0
 
     # Commit a single edit containing all changes.
-    edit_summary = "; ".join(summary_parts) if summary_parts else "maintenance update"
+    edit_summary = ("updating AE protection log"
+                    f"{f' ({len(new_entries)} new entries)' if new_entries else ''}"
+                     " ([[User:ClerkBot#t3|task 3]], [[WP:EXEMPTBOT|exempt]])")
     if DRY_RUN:
         # Keep dry-run concise but informative.
         log.info("[DRY RUN] Would save a single edit with summary: %s", edit_summary)
         if new_entries:
             log.info("[DRY RUN] Appended entries:\n%s", "\n".join(new_entries))
-        # Show whether header/footer were inserted and whether timestamp changed.
-        log.info("[DRY RUN] Header/footer adjusted: %s", "yes" if header_footer_changed else "no")
+        # Show whether footer was repositioned and whether timestamp changed.
+        log.info("[DRY RUN] Footer repositioned: %s", "yes" if new_entries else "no")
         log.info("[DRY RUN] Timestamp updated: %s", "yes" if UPDATE_TIMESTAMP else "no")
     else:
         token = site.get_token('csrf')
