@@ -32,9 +32,12 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import time
+import calendar
 from typing import Dict, Iterable, List, Optional, Tuple
 
 import mwclient
+from mwclient.page import Page as MWPage  # correct type for page objects
 
 
 # --------- Logging ---------
@@ -161,8 +164,18 @@ class TopicDetector:
 
     def __init__(self, codes: List[str], specific_pages: Dict[str, str]):
         self.codes = sorted([c.lower() for c in codes], key=len, reverse=True)
-        # Normalize specific pages for case-insensitive match
-        self.specific_pages = {code.lower(): page.lower() for code, page in specific_pages.items()}
+        # Normalize specific pages for case-insensitive match and common dash variants
+        def _norm(s: str) -> str:
+            return (
+                (s or "")
+                .lower()
+                .replace("\u2013", "-")  # en dash
+                .replace("\u2014", "-")  # em dash
+                .replace("\u2010", "-")  # hyphen
+                .replace("\u2212", "-")  # minus sign
+            )
+        self._norm = _norm
+        self.specific_pages = {code.lower(): _norm(page) for code, page in specific_pages.items()}
         # Precompile regexes for code token matches
         self._code_res = {
             code: re.compile(r"(?i)(?<![A-Za-z])" + re.escape(code) + r"(?![A-Za-z])")
@@ -173,7 +186,7 @@ class TopicDetector:
 
     def detect(self, comment: str) -> str:
         comment = (comment or "")
-        lower = comment.lower()
+        lower = self._norm(comment)
 
         # Heuristic (1): bare code token
         for code in self.codes:
@@ -208,8 +221,10 @@ def load_topics(path: str) -> TopicDetector:
 # --------- Core logic ---------
 
 def connect_site() -> mwclient.Site:
+    # Use the modern 'scheme' argument to avoid deprecation warnings.
     site = mwclient.Site(
-        host=("https", API_HOST),
+        API_HOST,
+        scheme="https",
         path=API_PATH,
         clients_useragent=USER_AGENT,
     )
@@ -217,7 +232,7 @@ def connect_site() -> mwclient.Site:
     return site
 
 
-def fetch_target_page(site: mwclient.Site, title: str) -> mwclient.Page:
+def fetch_target_page(site: mwclient.Site, title: str) -> MWPage:
     return site.pages[title]
 
 
@@ -265,11 +280,22 @@ def build_action_string(ev: dict) -> str:
     return base
 
 
-def to_mediawiki_timestamp(ts_iso: str) -> str:
+def to_mediawiki_timestamp(ts_value) -> str:
     """
-    Convert ISO8601 "YYYY-MM-DDTHH:MM:SSZ" to MediaWiki sig timestamp "HH:MM, D Month YYYY (UTC)".
+    Convert various timestamp representations to MediaWiki sig timestamp:
+      - str in ISO8601 "YYYY-MM-DDTHH:MM:SSZ"
+      - time.struct_time (as returned by mwclient logevents)
+      - datetime (naive or aware)
     """
-    dt = datetime.strptime(ts_iso, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    if isinstance(ts_value, str):
+        dt = datetime.strptime(ts_value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    elif isinstance(ts_value, time.struct_time):
+        # struct_time is in UTC for MediaWiki API; use calendar.timegm
+        dt = datetime.fromtimestamp(calendar.timegm(ts_value), tz=timezone.utc)
+    elif isinstance(ts_value, datetime):
+        dt = ts_value if ts_value.tzinfo else ts_value.replace(tzinfo=timezone.utc)
+    else:
+        raise TypeError(f"Unsupported timestamp type: {type(ts_value)!r}")
     return to_mediawiki_sig_timestamp(dt)
 
 
@@ -280,10 +306,10 @@ def format_entry(ev: dict, topic_code: str) -> str:
     logid = ev.get("logid")
     user = ev.get("user") or ""
     title = ev.get("title") or ""
-    ts_iso = ev.get("timestamp") or ""
+    ts_value = ev.get("timestamp")  # may be struct_time or str
     comment = ev.get("comment") or ""
 
-    date_str = to_mediawiki_timestamp(ts_iso)
+    date_str = to_mediawiki_timestamp(ts_value)
     action_str = build_action_string(ev)
 
     # Wrap potentially hazardous parameters in <nowiki>...</nowiki>
@@ -315,7 +341,7 @@ def main() -> int:
         return 2
 
     site = connect_site()
-    site.assertuser()
+    # Removed: mwclient.Site has no public assertuser() method.
 
     page = fetch_target_page(site, TARGET_PAGE)
     if not page.exists:
@@ -361,18 +387,23 @@ def main() -> int:
         if DRY_RUN:
             log.info("[DRY RUN] Would append:\n%s", append_text)
         else:
-            # Append without touching the rest of the page
+            # Append via MediaWiki API with appendtext to avoid fetching/saving whole page.
             log.info("Appending %d entries to %s", len(new_entries), TARGET_PAGE)
-            page.edit(appendtext=append_text, summary=summary, bot=True)
+            token = site.get_token('csrf')
+            res = site.api(
+                'edit',
+                title=TARGET_PAGE,
+                appendtext=append_text,
+                summary=summary,
+                bot=True,
+                token=token,
+            )
+            log.debug("Edit API response: %r", res)
 
     # Optional: update the 'Last updated' line to now (UTC), if explicitly requested.
     if UPDATE_TIMESTAMP:
         now_line = "Last updated: " + to_mediawiki_sig_timestamp(datetime.now(tz=timezone.utc))
-        # Replace only the matched timestamp, leave the rest unchanged
-        def _repl(m: re.Match) -> str:
-            return "Last updated: " + now_line.split("Last updated: ", 1)[1]
-
-        new_text, n = LAST_UPDATED_RE.subn(_repl, text, count=1)
+        new_text, n = LAST_UPDATED_RE.subn(now_line, text, count=1)
         if n == 1:
             if DRY_RUN:
                 log.info("[DRY RUN] Would update first line to: %s", now_line)
@@ -382,7 +413,7 @@ def main() -> int:
                 # Do a full save merging the original text (with replaced timestamp) plus any new entries we appended above.
                 # If we appended earlier, page.text() includes the old version; to avoid edit conflict, refetch current.
                 current = page.text()
-                current_updated, n2 = LAST_UPDATED_RE.subn(_repl, current, count=1)
+                current_updated, n2 = LAST_UPDATED_RE.subn(now_line, current, count=1)
                 if n2 == 1:
                     page.save(current_updated, summary="Update last updated timestamp", bot=True)
         else:
