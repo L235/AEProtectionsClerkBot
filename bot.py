@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 ClerkBot — AE protection actions logger
+Now also ensures {{/header}} appears before the first {{/entry}} and {{/footer}} after the last entry.
 
 - Uses mwclient (MediaWiki Python client).
 - All configuration via environment variables.
@@ -36,6 +37,7 @@ import time
 import calendar
 from typing import Dict, Iterable, List, Optional, Tuple
 
+from typing import Match
 import mwclient
 from mwclient.page import Page as MWPage  # correct type for page objects
 
@@ -95,6 +97,10 @@ LAST_UPDATED_RE = re.compile(
 
 # Template entry pattern to find existing logids and avoid duplicates on append
 ENTRY_LOGID_RE = re.compile(r"\{\{\/entry\|[^}]*\blogid=(\d+)\b[^}]*\}\}", re.DOTALL)
+
+# Lightweight presence checks for header/footer markers
+HEADER_MARK = "{{/header}}"
+FOOTER_MARK = "{{/footer}}"
 
 
 # --------- Utilities ---------
@@ -332,6 +338,43 @@ def format_entry(ev: dict, topic_code: str) -> str:
     )
 
 
+def ensure_header_footer(text: str) -> Tuple[str, bool]:
+    """
+    Ensure the page has '{{/header}}' immediately before the *first* {{/entry}} and
+    '{{/footer}}' immediately after the *last* {{/entry}}. If there are no entries,
+    the text is returned unchanged. Idempotent: if either marker already exists
+    anywhere on the page, we do not add another.
+    """
+    # Find all entry occurrences using the same pattern family the bot writes.
+    matches: List[Match[str]] = list(ENTRY_LOGID_RE.finditer(text))
+    if not matches:
+        return text, False
+
+    changed = False
+    out = text
+
+    # Insert header before first entry if not present anywhere.
+    if HEADER_MARK not in out:
+        first = matches[0].start()
+        # Add a newline before header unless we're at BOF or already on a fresh line.
+        leading_nl = "" if first == 0 or out[max(0, first - 1)] == "\n" else "\n"
+        insertion = leading_nl + HEADER_MARK + "\n"
+        out = out[:first] + insertion + out[first:]
+        changed = True
+        # Offsets changed; recompute match positions
+        matches = list(ENTRY_LOGID_RE.finditer(out))
+
+    # Insert footer after last entry if not present anywhere.
+    if FOOTER_MARK not in out:
+        last_end = matches[-1].end()
+        # Ensure footer starts on its own line.
+        prefix_nl = "" if (last_end > 0 and out[last_end - 1] == "\n") else "\n"
+        out = out[:last_end] + prefix_nl + FOOTER_MARK + "\n" + out[last_end:]
+        changed = True
+
+    return out, changed
+
+
 def main() -> int:
     # Load topic detection data
     try:
@@ -379,45 +422,63 @@ def main() -> int:
         new_entries.append(entry_line)
         appended_logids.append(int(logid))
 
-    if not new_entries:
-        log.info("No new AE protection actions to append.")
-    else:
-        append_text = "\n" + "\n".join(new_entries) + "\n"
-        summary = f"Log {len(new_entries)} arbitration enforcement protection action(s)"
-        if DRY_RUN:
-            log.info("[DRY RUN] Would append:\n%s", append_text)
-        else:
-            # Append via MediaWiki API with appendtext to avoid fetching/saving whole page.
-            log.info("Appending %d entries to %s", len(new_entries), TARGET_PAGE)
-            token = site.get_token('csrf')
-            res = site.api(
-                'edit',
-                title=TARGET_PAGE,
-                appendtext=append_text,
-                summary=summary,
-                bot=True,
-                token=token,
-            )
-            log.debug("Edit API response: %r", res)
+    # Build the new page content in-memory so we can do ONE edit that:
+    # - appends new entries
+    # - (optionally) updates the timestamp
+    # - (idempotently) ensures header/footer markers
+    new_text = text
+    summary_parts: List[str] = []
 
-    # Optional: update the 'Last updated' line to now (UTC), if explicitly requested.
+    # Update timestamp in the same edit if requested.
     if UPDATE_TIMESTAMP:
         now_line = "Last updated: " + to_mediawiki_sig_timestamp(datetime.now(tz=timezone.utc))
-        new_text, n = LAST_UPDATED_RE.subn(now_line, text, count=1)
+        new_text, n = LAST_UPDATED_RE.subn(now_line, new_text, count=1)
         if n == 1:
-            if DRY_RUN:
-                log.info("[DRY RUN] Would update first line to: %s", now_line)
-            else:
-                # Prepend replacement and leave appended entries intact if we also appended above
-                # We must refetch to avoid stomping the append; safer: prependtext is not suitable.
-                # Do a full save merging the original text (with replaced timestamp) plus any new entries we appended above.
-                # If we appended earlier, page.text() includes the old version; to avoid edit conflict, refetch current.
-                current = page.text()
-                current_updated, n2 = LAST_UPDATED_RE.subn(now_line, current, count=1)
-                if n2 == 1:
-                    page.save(current_updated, summary="Update last updated timestamp", bot=True)
+            summary_parts.append("update timestamp")
         else:
             log.warning("Did not find 'Last updated' line to update.")
+
+    # Append new entries (if any).
+    if new_entries:
+        append_block = "\n" + "\n".join(new_entries) + "\n"
+        new_text = new_text + append_block
+        summary_parts.insert(0, f"log {len(new_entries)} arbitration enforcement protection action(s)")
+    else:
+        log.info("No new AE protection actions to append.")
+
+    # Ensure header/footer around the entries region.
+    # Run this after potential append so markers wrap newly added entries too.
+    new_text, header_footer_changed = ensure_header_footer(new_text)
+    if header_footer_changed:
+        summary_parts.append("ensure header/footer")
+
+    # If nothing changed at all, bail out.
+    if new_text == text:
+        log.info("Nothing to do: no new entries, no timestamp update, and header/footer already present.")
+        return 0
+
+    # Commit a single edit containing all changes.
+    edit_summary = "; ".join(summary_parts) if summary_parts else "maintenance update"
+    if DRY_RUN:
+        # Keep dry-run concise but informative.
+        log.info("[DRY RUN] Would save a single edit with summary: %s", edit_summary)
+        if new_entries:
+            log.info("[DRY RUN] Appended entries:\n%s", "\n".join(new_entries))
+        # Show whether header/footer were inserted and whether timestamp changed.
+        log.info("[DRY RUN] Header/footer adjusted: %s", "yes" if header_footer_changed else "no")
+        log.info("[DRY RUN] Timestamp updated: %s", "yes" if UPDATE_TIMESTAMP else "no")
+    else:
+        token = site.get_token('csrf')
+        log.info("Saving single edit to %s (%s)", TARGET_PAGE, edit_summary)
+        res = site.api(
+            'edit',
+            title=TARGET_PAGE,
+            text=new_text,
+            summary=edit_summary,
+            bot=True,
+            token=token,
+        )
+        log.debug("Edit API response: %r", res)
 
     return 0
 
