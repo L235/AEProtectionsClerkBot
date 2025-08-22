@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 import time
@@ -155,6 +156,32 @@ def mediawiki_param_nowiki(value: str) -> str:
 def iso8601_from_dt(dt: datetime) -> str:
     """Return ISO8601 with 'Z'."""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def clean_invisible_unicode(text: str) -> str:
+    """Remove invisible Unicode characters that could cause display issues."""
+    if not text:
+        return text
+    
+    # Remove common problematic invisible Unicode characters
+    # LTR/RTL marks and other directional formatting characters
+    invisible_chars = [
+        '\u200E', '\u200F',  # LTR/RTL marks
+        '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',  # Directional formatting
+        '\u2066', '\u2067', '\u2068', '\u2069',  # Directional isolates
+        '\uFEFF',  # Zero Width No-Break Space (BOM)
+        '\u200B', '\u200C', '\u200D',  # Zero width characters
+    ]
+    
+    cleaned = text
+    for char in invisible_chars:
+        cleaned = cleaned.replace(char, '')
+    
+    # Also remove other control characters except newlines, tabs, and carriage returns
+    cleaned = ''.join(char for char in cleaned 
+                     if unicodedata.category(char)[0] != 'C' or char in '\n\t\r')
+    
+    return cleaned
 
 
 # --------- Topic detection ---------
@@ -440,7 +467,7 @@ def main() -> int:
         res = site.api(
             'edit',
             title=TARGET_PAGE,
-            text=new_text,
+            text=clean_invisible_unicode(new_text),
             summary=edit_summary,
             bot=True,
             token=token,
