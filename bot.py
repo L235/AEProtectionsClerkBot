@@ -19,7 +19,6 @@ Key Features:
 - Duplicate detection using log IDs to prevent re-logging existing entries
 - Topic code detection using multiple heuristics (bare codes, WP:CT/ shortcuts, specific pages)
 - Atomic editing: performs all updates in a single edit to minimize page history
-- Dry-run mode for testing without making actual changes
 - Comprehensive error handling and logging
 - Unicode normalization to prevent display issues
 
@@ -38,7 +37,6 @@ Environment variables (all ASCII):
   CLERKBOT_API_PATH           Optional. Path (default: "/w/")
   CLERKBOT_USER_AGENT         Optional. Shown in requests (default set below)
   CLERKBOT_TOPICS_PATH        Optional. Path to topics JSON (default: "ctop_topics.json" in same dir)
-  CLERKBOT_DRY_RUN            Optional. "1" to run without saving edits
   CLERKBOT_UPDATE_TIMESTAMP   Optional. "1" to update the leading "Last updated: ..." line to current UTC
 
 The target page must begin with a line like:
@@ -84,7 +82,6 @@ USER_AGENT = os.environ.get(
     "ClerkBot-AEProtections/1.0 (https://en.wikipedia.org/wiki/User:ClerkBot)",
 )
 TOPICS_PATH = os.environ.get("CLERKBOT_TOPICS_PATH")
-DRY_RUN = os.environ.get("CLERKBOT_DRY_RUN", "0") == "1"
 UPDATE_TIMESTAMP = os.environ.get("CLERKBOT_UPDATE_TIMESTAMP", "0") == "1"
 
 if not USERNAME or not PASSWORD or not TARGET_PAGE:
@@ -469,26 +466,18 @@ def main() -> int:
     edit_summary = ("updating AE protection log"
                     f"{f' ({len(new_entries)} new entries)' if new_entries else ''}"
                      " ([[User:ClerkBot#t3|task 3]], [[WP:EXEMPTBOT|exempt]])")
-    if DRY_RUN:
-        # Keep dry-run concise but informative.
-        log.info("[DRY RUN] Would save a single edit with summary: %s", edit_summary)
-        if new_entries:
-            log.info("[DRY RUN] Appended entries:\n%s", "\n".join(new_entries))
-        # Show whether footer was repositioned and whether timestamp changed.
-        log.info("[DRY RUN] Footer repositioned: %s", "yes" if new_entries else "no")
-        log.info("[DRY RUN] Timestamp updated: %s", "yes" if UPDATE_TIMESTAMP else "no")
-    else:
-        token = site.get_token('csrf')
-        log.info("Saving single edit to %s (%s)", TARGET_PAGE, edit_summary)
-        res = site.api(
-            'edit',
-            title=TARGET_PAGE,
-            text=clean_invisible_unicode(new_text),
-            summary=edit_summary,
-            bot=True,
-            token=token,
-        )
-        log.debug("Edit API response: %r", res)
+    
+    token = site.get_token('csrf')
+    log.info("Saving single edit to %s (%s)", TARGET_PAGE, edit_summary)
+    res = site.api(
+        'edit',
+        title=TARGET_PAGE,
+        text=clean_invisible_unicode(new_text),
+        summary=edit_summary,
+        bot=True,
+        token=token,
+    )
+    log.debug("Edit API response: %r", res)
 
     return 0
 
