@@ -1,12 +1,33 @@
 #!/usr/bin/env python3
 """
-ClerkBot — AE protection actions logger
-Now also ensures {{/header}} appears before the first {{/entry}} and {{/footer}} after the last entry.
+ClerkBot - AE protection actions logger
 
-- Uses mwclient (MediaWiki Python client).
-- All configuration via environment variables.
-- Designed to run via cron.
-- Appends new arbitration enforcement protection actions to a target page.
+This system monitors Wikipedia's protection log for arbitration enforcement (AE) actions
+and automatically appends them to a designated tracking page. It serves as an automated
+logging mechanism for Wikipedia administrators to maintain a centralized record of
+protection actions taken under arbitration enforcement authority.
+
+System Architecture:
+- Monitors MediaWiki's protection log via the API using mwclient library
+- Filters log entries to identify arbitration enforcement actions using keyword detection
+- Categorizes actions by contentious topic (CTOP) codes using configurable heuristics
+- Appends new entries to a target page while maintaining proper template structure
+- Ensures {{/header}} appears before entries and {{/footer}} after all entries
+- Optionally updates the page's "Last updated" timestamp
+
+Key Features:
+- Duplicate detection using log IDs to prevent re-logging existing entries
+- Topic code detection using multiple heuristics (bare codes, WP:CT/ shortcuts, specific pages)
+- Atomic editing: performs all updates in a single edit to minimize page history
+- Dry-run mode for testing without making actual changes
+- Comprehensive error handling and logging
+- Unicode normalization to prevent display issues
+
+Operational Design:
+- Configured entirely through environment variables for deployment flexibility
+- Designed for automated execution via cron or similar scheduling systems
+- Uses MediaWiki bot authentication for automated editing privileges
+- Implements rate limiting and error recovery through mwclient's built-in mechanisms
 
 Environment variables (all ASCII):
 
@@ -40,7 +61,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from typing import Match
 import mwclient
-from mwclient.page import Page as MWPage  # correct type for page objects
+from mwclient.page import Page as MWPage
 
 
 # --------- Logging ---------
@@ -119,7 +140,6 @@ def parse_mediawiki_sig_timestamp(ts_str: str) -> datetime:
 def to_mediawiki_sig_timestamp(dt: datetime) -> str:
     """
     Convert aware UTC datetime -> "HH:MM, D Month YYYY (UTC)"
-    Note: %-d works on Linux; on Windows use %#d. We normalize via manual day int.
     """
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
@@ -261,7 +281,6 @@ def load_topics(path: str) -> TopicDetector:
 # --------- Core logic ---------
 
 def connect_site() -> mwclient.Site:
-    # Use the modern 'scheme' argument to avoid deprecation warnings.
     site = mwclient.Site(
         API_HOST,
         scheme="https",
@@ -290,10 +309,9 @@ def enumerate_protect_logevents(
     # props include user, timestamp, comment, details/params
     # mwclient uses 'dir' (older/newer), 'type', 'start'
     for ev in site.logevents(type="protect", start=start_iso, dir="newer"):
-        # ev is a dict-like structure
         action = ev.get("action")
         if action == "unprotect":
-            continue  # explicit removals of protection
+            continue  # skip protection removals
         yield ev
 
 
@@ -346,13 +364,13 @@ def format_entry(ev: dict, topic_code: str) -> str:
     logid = ev.get("logid")
     user = ev.get("user") or ""
     title = ev.get("title") or ""
-    ts_value = ev.get("timestamp")  # may be struct_time or str
+    ts_value = ev.get("timestamp")
     comment = ev.get("comment") or ""
 
     date_str = to_mediawiki_timestamp(ts_value)
     action_str = build_action_string(ev)
 
-    # formerly wrap potentially hazardous parameters in <nowiki>...</nowiki>; now omitting
+    # Parameters are used directly in template format without nowiki wrapping
     action_param = action_str
     summary_param = comment
 
@@ -381,8 +399,6 @@ def main() -> int:
         return 2
 
     site = connect_site()
-    # Removed: mwclient.Site has no public assertuser() method.
-
     page = fetch_target_page(site, TARGET_PAGE)
     if not page.exists:
         log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", TARGET_PAGE)
