@@ -407,14 +407,18 @@ def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> s
     )
     # Structure mandated by spec
     message = (
-        "== Categorization of AE protection actions needed ==\n"
-        f"Hello {admin},\n"
-        "I detected that you recently took the following page protection actions:\n"
+        "== Categorization of AE protection actions needed ({{subst:date}}) ==\n"
+        f"Hello {admin},\n\n"
+        "I'm a bot that helps log [[WP:AE|arbitration enforcement (AE)]] protection actions on behalf of the "
+        "Arbitration Committee. I detected that you recently took the following page protection actions:\n"
         f"{bullets}\n"
-        "These action(s) seemed to be [[WP:AE|arbitration enforcement (AE) actions]] based on the edit summaries, "
+        "These action(s) seemed to be AE actions based on the edit summaries, "
         "but I wasn't able to tell which arbitration case they related to. If these were AE actions, please take a "
         f"moment to log the appropriate case name at [[{TARGET_PAGE}|the AE protection log]]. If they were not, "
-        "feel free to remove the actions from the AE protection log. \n"
+        "feel free to remove the actions from the AE protection log. \n\n"
+        "Going forward, in order to help me categorize AE actions, please include a link to the contentious topic "
+        "under which the action was taken in the protection edit summary (for example, <nowiki>[[WP:CT/BLP]]</nowiki>).\n\n"
+        "If you have any questions, please feel free to reach out at the [[WT:AC/C|arbitration clerks' noticeboard]].\n\n" 
         "Thank you! ~~~~\n"
     )
     return message
