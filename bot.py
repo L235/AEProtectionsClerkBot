@@ -38,6 +38,8 @@ Environment variables (all ASCII):
   CLERKBOT_USER_AGENT         Optional. Shown in requests (default set below)
   CLERKBOT_TOPICS_PATH        Optional. Path to topics JSON (default: "ctop_topics.json" in same dir)
   CLERKBOT_UPDATE_TIMESTAMP   Optional. "1" to update the leading "Last updated: ..." line to current UTC
+  CLERKBOT_NOTIFY_ADMINS      Optional. Controls the notify-admin module. One of:
+                              "false", "debug", or "true". Defaults to "debug" if unset/invalid.
 
 The target page must begin with a line like:
   Last updated: 19:32, 19 August 2025 (UTC)
@@ -83,6 +85,12 @@ USER_AGENT = os.environ.get(
 )
 TOPICS_PATH = os.environ.get("CLERKBOT_TOPICS_PATH")
 UPDATE_TIMESTAMP = os.environ.get("CLERKBOT_UPDATE_TIMESTAMP", "0") == "1"
+# Notify-admin module configuration
+_notify_raw = (os.environ.get("CLERKBOT_NOTIFY_ADMINS") or "").strip().lower()
+if _notify_raw not in ("false", "debug", "true"):
+    _notify_raw = "debug"
+NOTIFY_MODE = _notify_raw  # "false" | "debug" | "true"
+DRYRUN_PAGE = f"{TARGET_PAGE}/notifications_dryrun"
 
 if not USERNAME or not PASSWORD or not TARGET_PAGE:
     log.error("Missing required environment variables. "
@@ -387,6 +395,71 @@ def format_entry(ev: dict, topic_code: str) -> str:
     )
 
 
+# --------- Notify admin module ---------
+def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> str:
+    """
+    Build the single wikitext notification block for one admin.
+    items: list of (logid, utc_date_sig, protection_page_title)
+    """
+    bullets = "\n".join(
+        f"* [[Special:Redirect/logid/{logid}|{date_sig}]] ([[{title}]])"
+        for (logid, date_sig, title) in items
+    )
+    # Structure mandated by spec
+    message = (
+        "== Categorization of AE protection actions needed ==\n"
+        f"Hello {admin},\n"
+        "I detected that you recently took the following page protection actions:\n"
+        f"{bullets}\n"
+        "These action(s) seemed to be [[WP:AE|arbitration enforcement (AE) actions]] based on the edit summaries, "
+        "but I wasn't able to tell which arbitration case they related to. If these were AE actions, please take a "
+        f"moment to log the appropriate case name at [[{TARGET_PAGE}|the AE protection log]]. If they were not, "
+        "feel free to remove the actions from the AE protection log. \n"
+        "Thank you! ~~~~\n"
+    )
+    return message
+
+def _notify_admins(
+    site: mwclient.Site,
+    grouped: Dict[str, List[Tuple[int, str, str]]],
+    token: str,
+) -> None:
+    """
+    Send one notification per admin in 'grouped'.
+    grouped maps admin -> list[(logid, date_sig, title)] for NEWLY LOGGED, UNCLASSIFIED actions.
+    Honors NOTIFY_MODE: "false" (no-op), "debug" (write to DRYRUN_PAGE), "true" (post to admin talk).
+    """
+    if NOTIFY_MODE == "false":
+        log.info("Notify-admin module disabled (CLERKBOT_NOTIFY_ADMINS=false).")
+        return
+    if not grouped:
+        log.info("Notify-admin module: no unclassified actions to notify.")
+        return
+
+    for admin, items in grouped.items():
+        if not items:
+            continue
+        text = _build_notification_text(admin, items)
+        if NOTIFY_MODE == "debug":
+            dest_title = DRYRUN_PAGE
+            summary = f"DEBUG: AE protection categorization notice for {admin}"
+        else:
+            dest_title = f"User talk:{admin}"
+            summary = "AE protection categorization notice"
+        try:
+            log.info("Posting notification (%d item(s)) to %s", len(items), dest_title)
+            site.api(
+                "edit",
+                title=dest_title,
+                appendtext="\n" + text + "\n",
+                summary=summary + " (bot)",
+                bot=True,
+                token=token,
+            )
+        except mwclient.errors.APIError as e:
+            log.error("Failed to notify %s at %s: %s", admin, dest_title, e)
+
+
 def main() -> int:
     # Load topic detection data
     try:
@@ -413,6 +486,8 @@ def main() -> int:
 
     new_entries: List[str] = []
     appended_logids: List[int] = []
+    # For notify-admin module: admin -> list of (logid, date_sig, title) where topic was not determinable
+    unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]] = {}
 
     for ev in enumerate_protect_logevents(site, last_updated_dt):
         logid = ev.get("logid")
@@ -431,6 +506,14 @@ def main() -> int:
         entry_line = format_entry(ev, topic_code)
         new_entries.append(entry_line)
         appended_logids.append(int(logid))
+        # Track unclassified (no topic determined) for notifications
+        if (topic_code or "").strip() == "":
+            admin = (ev.get("user") or "").strip()
+            if admin:
+                ts_value = ev.get("timestamp")
+                date_sig = to_mediawiki_timestamp(ts_value)
+                title = ev.get("title") or ""
+                unclassified_by_admin.setdefault(admin, []).append((int(logid), date_sig, title))
 
     # Build the new page content in-memory so we can do ONE edit that:
     # - appends new entries
@@ -478,7 +561,12 @@ def main() -> int:
         token=token,
     )
     log.debug("Edit API response: %r", res)
-
+    # Run notify-admin module after attempting the main page save.
+    # Only notify for actions that were newly appended in this run.
+    if new_entries and unclassified_by_admin:
+        _notify_admins(site, unclassified_by_admin, token)
+    else:
+        log.info("Notify-admin module: nothing to notify.")
     return 0
 
 
