@@ -57,7 +57,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import time
 import calendar
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Set
 
 from typing import Match
 import mwclient
@@ -423,10 +423,46 @@ def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> s
     )
     return message
 
+
+def fetch_bot_usernames(site: mwclient.Site) -> Set[str]:
+    """
+    Retrieve the set of usernames that have the 'bot' user right.
+    Uses the MediaWiki API list=allusers with augroup=bot and handles continuation.
+    """
+    bot_usernames: Set[str] = set()
+    cont: Dict[str, str] = {"continue": ""}
+    while True:
+        try:
+            resp = site.api(
+                "query",
+                list="allusers",
+                augroup="bot",
+                aulimit="max",
+                **cont,
+            )
+        except mwclient.errors.APIError as e:
+            log.error("Failed to fetch bot usernames: %s", e)
+            break
+
+        users = ((resp or {}).get("query") or {}).get("allusers") or []
+        for u in users:
+            name = u.get("name")
+            if name:
+                bot_usernames.add(name)
+
+        new_cont = (resp or {}).get("continue")
+        if not new_cont:
+            break
+        cont = new_cont
+
+    log.info("Loaded %d bot usernames for notification filtering.", len(bot_usernames))
+    return bot_usernames
+
 def _notify_admins(
     site: mwclient.Site,
     grouped: Dict[str, List[Tuple[int, str, str]]],
     token: str,
+    bot_usernames: Set[str],
 ) -> None:
     """
     Send one notification per admin in 'grouped'.
@@ -442,6 +478,9 @@ def _notify_admins(
 
     for admin, items in grouped.items():
         if not items:
+            continue
+        if admin in bot_usernames:
+            log.debug("Notify-admin: skipping bot account %s", admin)
             continue
         text = _build_notification_text(admin, items)
         if NOTIFY_MODE == "debug":
@@ -473,6 +512,7 @@ def main() -> int:
         return 2
 
     site = connect_site()
+    bot_usernames = fetch_bot_usernames(site)
     page = fetch_target_page(site, TARGET_PAGE)
     if not page.exists:
         log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", TARGET_PAGE)
@@ -568,7 +608,7 @@ def main() -> int:
     # Run notify-admin module after attempting the main page save.
     # Only notify for actions that were newly appended in this run.
     if new_entries and unclassified_by_admin:
-        _notify_admins(site, unclassified_by_admin, token)
+        _notify_admins(site, unclassified_by_admin, token, bot_usernames)
     else:
         log.info("Notify-admin module: nothing to notify.")
     return 0
