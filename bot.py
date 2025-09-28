@@ -37,14 +37,11 @@ Environment variables (all ASCII):
   CLERKBOT_API_PATH           Optional. Path (default: "/w/")
   CLERKBOT_USER_AGENT         Optional. Shown in requests (default set below)
   CLERKBOT_TOPICS_PATH        Optional. Path to topics JSON (default: "ctop_topics.json" in same dir)
-  CLERKBOT_UPDATE_TIMESTAMP   Optional. "1" to update the leading "Last updated: ..." line to current UTC
   CLERKBOT_NOTIFY_ADMINS      Optional. Controls the notify-admin module. One of:
                               "false", "debug", or "true". Defaults to "debug" if unset/invalid.
 
 The target page must begin with a line like:
   Last updated: 19:32, 19 August 2025 (UTC)
-
-This script will NOT change anything but appending entries unless CLERKBOT_UPDATE_TIMESTAMP=1.
 """
 
 import json
@@ -84,7 +81,6 @@ USER_AGENT = os.environ.get(
     "ClerkBot-AEProtections/1.0 (https://en.wikipedia.org/wiki/User:ClerkBot)",
 )
 TOPICS_PATH = os.environ.get("CLERKBOT_TOPICS_PATH")
-UPDATE_TIMESTAMP = os.environ.get("CLERKBOT_UPDATE_TIMESTAMP", "0") == "1"
 # Notify-admin module configuration
 _notify_raw = (os.environ.get("CLERKBOT_NOTIFY_ADMINS") or "").strip().lower()
 if _notify_raw not in ("false", "debug", "true"):
@@ -564,12 +560,11 @@ def main() -> int:
     # - (optionally) updates the timestamp
     new_text = text
 
-    # Update timestamp in the same edit if requested.
-    if UPDATE_TIMESTAMP:
-        now_line = "Last updated: " + to_mediawiki_sig_timestamp(datetime.now(tz=timezone.utc))
-        new_text, n = LAST_UPDATED_RE.subn(now_line, new_text, count=1)
-        if n != 1:
-            log.warning("Did not find 'Last updated' line to update.")
+    # Update timestamp in the same edit.
+    now_line = "Last updated: " + to_mediawiki_sig_timestamp(datetime.now(tz=timezone.utc))
+    new_text, n = LAST_UPDATED_RE.subn(now_line, new_text, count=1)
+    if n != 1:
+        log.warning("Did not find 'Last updated' line to update.")
 
     # Remove existing footer before appending new entries
     new_text = new_text.replace(FOOTER_MARK, "")
