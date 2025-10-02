@@ -575,7 +575,7 @@ def main() -> int:
     # Commit a single edit containing all changes.
     edit_summary = ("updating AE protection log"
                     f"{f' ({len(new_entries)} new entries)' if new_entries else ''}"
-                     " ([[User:ClerkBot#t3|task 3]], [[WP:EXEMPTBOT|exempt]])")
+                     " ([[User:ClerkBot#t3|task 3]], [[Wikipedia:Bots/Requests for approval/ClerkBot|BRFA in trial]])")
     
     token = site.get_token('csrf')
     log.info("Saving single edit to %s (%s)", TARGET_PAGE, edit_summary)
