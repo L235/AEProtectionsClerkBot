@@ -477,7 +477,7 @@ def _notify_admins(
             summary = f"DEBUG: AE protection categorization notice for {admin}"
         else:
             dest_title = f"User talk:{admin}"
-            summary = "AE protection categorization notice"
+            summary = "adding AE protection categorization notice ([[User:ClerkBot#t3|task 3]], [[Wikipedia:Bots/Requests for approval/ClerkBot|BRFA in trial]])"
         try:
             log.info("Posting notification (%d item(s)) to %s", len(items), dest_title)
             site.api(
