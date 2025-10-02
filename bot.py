@@ -86,7 +86,7 @@ _notify_raw = (os.environ.get("CLERKBOT_NOTIFY_ADMINS") or "").strip().lower()
 if _notify_raw not in ("false", "debug", "true"):
     _notify_raw = "debug"
 NOTIFY_MODE = _notify_raw  # "false" | "debug" | "true"
-DRYRUN_PAGE = os.environ.get("NOTIFICATIONS_DRYRUN_PAGE", f"{TARGET_PAGE}/notifications_dryrun")
+DRYRUN_PAGE = os.environ.get("CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE", f"{TARGET_PAGE}/notifications_dryrun")
 
 if not USERNAME or not PASSWORD or not TARGET_PAGE:
     log.error("Missing required environment variables. "
