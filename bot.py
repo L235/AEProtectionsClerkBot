@@ -218,7 +218,7 @@ class TopicDetector:
     (3) If a CTOP specific page appears, return the corresponding code.
     """
 
-    def __init__(self, codes: List[str], specific_pages: Dict[str, str], override_strings: Dict[str, str]):
+    def __init__(self, codes: List[str], page_to_code: Dict[str, str], override_strings: Dict[str, str]):
         self.codes = sorted([c.lower() for c in codes], key=len, reverse=True)
         # Normalize specific pages for case-insensitive match and common dash variants
         def _norm(s: str) -> str:
@@ -231,7 +231,8 @@ class TopicDetector:
                 .replace("\u2212", "-")  # minus sign
             )
         self._norm = _norm
-        self.specific_pages = {code.lower(): _norm(page) for code, page in specific_pages.items()}
+        # Input mapping is now page -> code; store normalized page text -> code
+        self.page_to_code = { _norm(page): (code or "").lower() for page, code in page_to_code.items() }
         # Precompile regexes for code token matches
         self._code_res = {
             code: re.compile(r"(?i)(?<![A-Za-z])" + re.escape(code) + r"(?![A-Za-z])")
@@ -258,8 +259,8 @@ class TopicDetector:
                 return code
 
         # Heuristic (3): specific page string appears anywhere
-        for code, page in self.specific_pages.items():
-            if page in lower:
+        for page_norm, code in self.page_to_code.items():
+            if page_norm in lower:
                 return code
             
         # Heuristic (4): override_strings
@@ -274,11 +275,12 @@ def load_topics(path: str) -> TopicDetector:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     codes = data.get("codes", [])
-    specific_pages = data.get("specific_pages", {})
+    # JSON now provides mapping: page -> code
+    page_to_code = data.get("specific_pages", {})
     override_strings = data.get("override_strings", {})
-    if not codes or not specific_pages:
+    if not codes or not page_to_code:
         raise ValueError("ctop_topics.json missing required keys 'codes' or 'specific_pages'")
-    return TopicDetector(codes=codes, specific_pages=specific_pages, override_strings=override_strings)
+    return TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
 
 
 # --------- Core logic ---------
