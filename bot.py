@@ -406,7 +406,10 @@ def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> s
         for (logid, date_sig, title) in items
     )
 
-    message = f"{{User:ClerkBot/AE notification template|admin={admin}|actions={bullets}|target_page={TARGET_PAGE}}}"
+    message = ("{{subst:User:ClerkBot/AE notification template"
+        f"|admin={admin}|actions={bullets}|target_page={TARGET_PAGE}"
+        "}}"
+    )
     return message
 
 
