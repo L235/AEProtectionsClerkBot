@@ -119,8 +119,10 @@ LAST_UPDATED_RE = re.compile(
 )
 
 # Template entry pattern to find existing logids and avoid duplicates on append
-ENTRY_LOGID_RE = re.compile(r"\{\{\/entry\|[^}]*\blogid=(\d+)\b[^}]*\}\}", re.DOTALL)
-
+ENTRY_LOGID_RE = re.compile(
+    r"\{\{\s*User:ClerkBot/AE[ _]entry\s*\|[^}]*\blogid\s*=\s*(\d+)\b[^}]*\}\}",
+    re.DOTALL | re.IGNORECASE,
+)
 # Lightweight presence checks for header/footer markers
 HEADER_MARK = "{{/header}}"
 FOOTER_MARK = "{{/footer}}"
@@ -379,7 +381,7 @@ def format_entry(ev: dict, topic_code: str) -> str:
     topic_part = topic_code
 
     return (
-        "{{/entry"
+        "{{User:ClerkBot/AE entry"
         f"|logid={logid}"
         f"|admin={user}"
         f"|page={title}"
