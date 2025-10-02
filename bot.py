@@ -305,7 +305,7 @@ def enumerate_protect_logevents(
     start_utc: datetime,
 ) -> Iterable[dict]:
     """
-    Iterate logevents (type=protect) newer than start_utc. Skip 'unprotect' actions.
+    Iterate logevents (type=protect) newer than start_utc. Skip 'unprotect' and 'move_prot' actions.
     mwclient handles API continuation internally.
     """
     start_iso = iso8601_from_dt(start_utc)
@@ -315,8 +315,8 @@ def enumerate_protect_logevents(
     # mwclient uses 'dir' (older/newer), 'type', 'start'
     for ev in site.logevents(type="protect", start=start_iso, dir="newer"):
         action = ev.get("action")
-        if action == "unprotect":
-            continue  # skip protection removals
+        if action in ("unprotect", "move_prot"):
+            continue  # skip protection removals and move protection actions
         yield ev
 
 
