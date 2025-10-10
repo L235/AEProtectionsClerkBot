@@ -36,7 +36,7 @@ Environment variables (all ASCII):
   CLERKBOT_API_HOST           Optional. Host for wiki (default: "en.wikipedia.org")
   CLERKBOT_API_PATH           Optional. Path (default: "/w/")
   CLERKBOT_USER_AGENT         Optional. Shown in requests (default set below)
-  CLERKBOT_TOPICS_PATH        Optional. Path to topics JSON (default: "ctop_topics.json" in same dir)
+  CLERKBOT_CONFIG_URL         Optional. URL to fetch topics JSON (default: Wikipedia ClerkBot configuration URL)
   CLERKBOT_NOTIFY_ADMINS      Optional. Controls the notify-admin module. One of:
                               "false", "debug", or "true". Defaults to "debug" if unset/invalid.
 
@@ -56,6 +56,7 @@ from pathlib import Path
 import time
 import calendar
 from typing import Dict, Iterable, List, Optional, Tuple, Set
+from urllib.request import urlopen
 
 from typing import Match
 import mwclient
@@ -94,7 +95,10 @@ USER_AGENT = os.environ.get(
 )
 
 # Topic detection configuration
-TOPICS_PATH = os.environ.get("CLERKBOT_TOPICS_PATH")
+CONFIG_URL = os.environ.get(
+    "CLERKBOT_CONFIG_URL",
+    "https://en.wikipedia.org/w/index.php?title=User:ClerkBot/T3/config.json&action=raw&ctype=application/json"
+)
 
 # Notify-admin module configuration
 # Validate the environment variable and default to DEBUG mode for safety
@@ -111,11 +115,6 @@ if not USERNAME or not PASSWORD or not TARGET_PAGE:
     log.error("Missing required environment variables. "
               "Set CLERKBOT_USERNAME, CLERKBOT_PASSWORD, CLERKBOT_TARGET_PAGE.")
     sys.exit(2)
-
-# Set default topics path if not specified
-if not TOPICS_PATH:
-    # Resolve to the directory of this script
-    TOPICS_PATH = str(Path(__file__).with_name("ctop_topics.json"))
 
 # --------- Constants ---------
 
@@ -307,15 +306,25 @@ class TopicDetector:
         return ""
 
 
-def load_topics(path: str) -> TopicDetector:
-    with open(path, "r", encoding="utf-8") as file:
-        data = json.load(file)
+def load_topics(url: str) -> TopicDetector:
+    """
+    Load topic detection configuration from a URL.
+
+    Args:
+        url: URL to fetch the JSON configuration from
+
+    Returns:
+        TopicDetector instance configured with the fetched data
+    """
+    log.info("Fetching topics configuration from %s", url)
+    with urlopen(url) as response:
+        data = json.loads(response.read().decode("utf-8"))
     codes = data.get("codes", [])
     # JSON now provides mapping: page -> code
     page_to_code = data.get("specific_pages", {})
     override_strings = data.get("override_strings", {})
     if not codes or not page_to_code:
-        raise ValueError("ctop_topics.json missing required keys 'codes' or 'specific_pages'")
+        raise ValueError("Configuration JSON missing required keys 'codes' or 'specific_pages'")
     return TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
 
 
@@ -708,9 +717,9 @@ def main() -> int:
     """
     # Load topic detection data
     try:
-        detector = load_topics(TOPICS_PATH)
+        detector = load_topics(CONFIG_URL)
     except Exception as error:
-        log.error("Failed to load CTOP topics data from '%s': %s", TOPICS_PATH, error)
+        log.error("Failed to load CTOP topics configuration from '%s': %s", CONFIG_URL, error)
         return 2
 
     # Connect to Wikipedia and load the target page
