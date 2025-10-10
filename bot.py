@@ -51,6 +51,7 @@ import re
 import sys
 import unicodedata
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
 import time
 import calendar
@@ -59,6 +60,14 @@ from typing import Dict, Iterable, List, Optional, Tuple, Set
 from typing import Match
 import mwclient
 from mwclient.page import Page as MWPage
+
+
+# --------- Enums ---------
+class NotifyMode(str, Enum):
+    """Notification mode for the notify-admin module."""
+    DISABLED = "false"
+    DEBUG = "debug"
+    ENABLED = "true"
 
 
 # --------- Logging ---------
@@ -70,30 +79,40 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # --------- Configuration ---------
+
+# Required authentication and target page
 USERNAME = os.environ.get("CLERKBOT_USERNAME")
 PASSWORD = os.environ.get("CLERKBOT_PASSWORD")
 TARGET_PAGE = os.environ.get("CLERKBOT_TARGET_PAGE")
 
+# Optional API and user agent configuration
 API_HOST = os.environ.get("CLERKBOT_API_HOST", "en.wikipedia.org")
 API_PATH = os.environ.get("CLERKBOT_API_PATH", "/w/")
 USER_AGENT = os.environ.get(
     "CLERKBOT_USER_AGENT",
     "ClerkBot-AEProtections/1.0 (https://en.wikipedia.org/wiki/User:ClerkBot)",
 )
+
+# Topic detection configuration
 TOPICS_PATH = os.environ.get("CLERKBOT_TOPICS_PATH")
+
 # Notify-admin module configuration
-_notify_raw = (os.environ.get("CLERKBOT_NOTIFY_ADMINS") or "").strip().lower()
-if _notify_raw not in ("false", "debug", "true"):
-    _notify_raw = "debug"
-NOTIFY_MODE = _notify_raw  # "false" | "debug" | "true"
+# Validate the environment variable and default to DEBUG mode for safety
+# This prevents accidental production notifications during development/testing
+notify_raw = (os.environ.get("CLERKBOT_NOTIFY_ADMINS") or "").strip().lower()
+if notify_raw not in (NotifyMode.DISABLED.value, NotifyMode.DEBUG.value, NotifyMode.ENABLED.value):
+    notify_raw = NotifyMode.DEBUG.value
+NOTIFY_MODE = NotifyMode(notify_raw)
+
 DRYRUN_PAGE = os.environ.get("CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE", f"{TARGET_PAGE}/notifications_dryrun")
 
+# Validate required configuration
 if not USERNAME or not PASSWORD or not TARGET_PAGE:
     log.error("Missing required environment variables. "
               "Set CLERKBOT_USERNAME, CLERKBOT_PASSWORD, CLERKBOT_TARGET_PAGE.")
     sys.exit(2)
 
-# Where to find the topics JSON by default
+# Set default topics path if not specified
 if not TOPICS_PATH:
     # Resolve to the directory of this script
     TOPICS_PATH = str(Path(__file__).with_name("ctop_topics.json"))
@@ -130,33 +149,33 @@ FOOTER_MARK = "{{/footer}}"
 
 # --------- Utilities ---------
 
-def parse_mediawiki_sig_timestamp(ts_str: str) -> datetime:
+def parse_mediawiki_sig_timestamp(timestamp_str: str) -> datetime:
     """
     Parse a MediaWiki ~~~~~ timestamp like "19:32, 19 August 2025 (UTC)" into aware UTC datetime.
     """
-    ts_str = ts_str.strip()
+    timestamp_str = timestamp_str.strip()
     # Example format: "19:32, 19 August 2025 (UTC)"
-    dt = datetime.strptime(ts_str, "%H:%M, %d %B %Y (UTC)")
-    return dt.replace(tzinfo=timezone.utc)
+    datetime_obj = datetime.strptime(timestamp_str, "%H:%M, %d %B %Y (UTC)")
+    return datetime_obj.replace(tzinfo=timezone.utc)
 
 
-def to_mediawiki_sig_timestamp(dt: datetime) -> str:
+def to_mediawiki_sig_timestamp(datetime_obj: datetime) -> str:
     """
     Convert aware UTC datetime -> "HH:MM, D Month YYYY (UTC)"
     """
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    dt = dt.astimezone(timezone.utc)
-    day = dt.day
+    if datetime_obj.tzinfo is None:
+        datetime_obj = datetime_obj.replace(tzinfo=timezone.utc)
+    datetime_obj = datetime_obj.astimezone(timezone.utc)
+    day = datetime_obj.day
     # Build without platform-specific %-d
-    return dt.strftime(f"%H:%M, {day} %B %Y (UTC)")
+    return datetime_obj.strftime(f"%H:%M, {day} %B %Y (UTC)")
 
 
 def extract_last_updated(text: str) -> Optional[datetime]:
-    m = LAST_UPDATED_RE.search(text)
-    if not m:
+    match = LAST_UPDATED_RE.search(text)
+    if not match:
         return None
-    return parse_mediawiki_sig_timestamp(m.group("ts"))
+    return parse_mediawiki_sig_timestamp(match.group("ts"))
 
 
 def extract_existing_logids(text: str) -> set:
@@ -164,8 +183,8 @@ def extract_existing_logids(text: str) -> set:
 
 
 def is_arbitration_enforcement(comment: str) -> bool:
-    c = (comment or "").lower()
-    return any(trigger in c for trigger in AE_TRIGGERS)
+    comment_lower = (comment or "").lower()
+    return any(trigger in comment_lower for trigger in AE_TRIGGERS)
 
 
 def mediawiki_param_nowiki(value: str) -> str:
@@ -176,9 +195,9 @@ def mediawiki_param_nowiki(value: str) -> str:
     return "<nowiki>" + value + "</nowiki>"
 
 
-def iso8601_from_dt(dt: datetime) -> str:
+def iso8601_from_dt(datetime_obj: datetime) -> str:
     """Return ISO8601 with 'Z'."""
-    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime_obj.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def clean_invisible_unicode(text: str) -> str:
@@ -216,6 +235,17 @@ class TopicDetector:
     (1) If a topic code appears in the comment, not surrounded by letters (case-insensitive), return that code.
     (2) If a WP:CT/$CODE shortcut appears, return $CODE.
     (3) If a CTOP specific page appears, return the corresponding code.
+    (4) If an override string appears, return the corresponding code.
+
+    Args:
+        codes: List of valid topic codes (e.g., ["ap", "blp", "cc"]). These are searched
+               as bare tokens in edit summaries.
+        page_to_code: Dictionary mapping full page names to topic codes (e.g.,
+                      "Wikipedia:Contentious topics/American politics" -> "ap").
+                      Used to detect topic codes from page references in edit summaries.
+        override_strings: Dictionary mapping special/legacy strings to topic codes (e.g.,
+                          "arbind" -> "sa"). Handles non-standard references that don't
+                          match standard patterns.
     """
 
     def __init__(self, codes: List[str], page_to_code: Dict[str, str], override_strings: Dict[str, str]):
@@ -246,34 +276,40 @@ class TopicDetector:
         comment = (comment or "")
         lower = self._norm(comment)
 
-        # Heuristic (1): bare code token
+        # Heuristic (1): bare code token (e.g., "CTOP:AP" or "restricted to AP")
+        # Matches topic codes when they appear as standalone words, not embedded in longer words
         for code in self.codes:
             if self._code_res[code].search(lower):
                 return code
 
-        # Heuristic (2): WP:CT/<code>
-        m = self._ctop_shortcut_re.search(lower)
-        if m:
-            code = m.group(1).lower()
+        # Heuristic (2): WP:CT/<code> shortcuts (e.g., "WP:CT/AP" or "WP: CT / AP")
+        # These are Wikipedia shortcuts commonly used in edit summaries
+        match = self._ctop_shortcut_re.search(lower)
+        if match:
+            code = match.group(1).lower()
             if code in self.codes:
                 return code
 
-        # Heuristic (3): specific page string appears anywhere
+        # Heuristic (3): specific page string appears anywhere in comment
+        # Detects full page names like "Wikipedia:Contentious topics/American politics"
+        # These may appear as links or plain text in edit summaries
         for page_norm, code in self.page_to_code.items():
             if page_norm in lower:
                 return code
-            
-        # Heuristic (4): override_strings
+
+        # Heuristic (4): override strings for special cases and legacy abbreviations
+        # Handles historical or non-standard references (e.g., "arbind" -> "sa")
         for override, code in self.override_strings.items():
             if override in lower:
                 return code
 
+        # No topic detected - return empty string
         return ""
 
 
 def load_topics(path: str) -> TopicDetector:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    with open(path, "r", encoding="utf-8") as file:
+        data = json.load(file)
     codes = data.get("codes", [])
     # JSON now provides mapping: page -> code
     page_to_code = data.get("specific_pages", {})
@@ -313,24 +349,31 @@ def enumerate_protect_logevents(
 
     # props include user, timestamp, comment, details/params
     # mwclient uses 'dir' (older/newer), 'type', 'start'
-    for ev in site.logevents(type="protect", start=start_iso, dir="newer"):
-        action = ev.get("action")
+    for log_event in site.logevents(type="protect", start=start_iso, dir="newer"):
+        action = log_event.get("action")
         if action in ("unprotect", "move_prot"):
             continue  # skip protection removals and move protection actions
-        yield ev
+        yield log_event
 
 
-def build_action_string(ev: dict) -> str:
+def build_action_string(log_event: dict) -> str:
     """
+    Build a human-readable action string from a protection log event.
+
     ACTION is constructed as:
       - if action == 'protect': "added protection (<description>)"
       - if action == 'modify':  "changed protection level (<description>)"
       - otherwise: use the raw action string.
-    Description is ev['params']['description'] when available.
+
+    Args:
+        log_event: A protection log event dict from the MediaWiki API
+
+    Returns:
+        A formatted action string describing what protection was applied
     """
-    action = ev.get("action", "")
+    action = log_event.get("action", "")
     desc = ""
-    params = ev.get("params") or {}
+    params = log_event.get("params") or {}
     desc = params.get("description") or ""
     if action == "protect":
         base = "added protection"
@@ -343,37 +386,47 @@ def build_action_string(ev: dict) -> str:
     return base
 
 
-def to_mediawiki_timestamp(ts_value) -> str:
+def to_mediawiki_timestamp(timestamp_value) -> str:
     """
     Convert various timestamp representations to MediaWiki sig timestamp:
       - str in ISO8601 "YYYY-MM-DDTHH:MM:SSZ"
       - time.struct_time (as returned by mwclient logevents)
       - datetime (naive or aware)
     """
-    if isinstance(ts_value, str):
-        dt = datetime.strptime(ts_value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
-    elif isinstance(ts_value, time.struct_time):
+    if isinstance(timestamp_value, str):
+        datetime_obj = datetime.strptime(timestamp_value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    elif isinstance(timestamp_value, time.struct_time):
         # struct_time is in UTC for MediaWiki API; use calendar.timegm
-        dt = datetime.fromtimestamp(calendar.timegm(ts_value), tz=timezone.utc)
-    elif isinstance(ts_value, datetime):
-        dt = ts_value if ts_value.tzinfo else ts_value.replace(tzinfo=timezone.utc)
+        datetime_obj = datetime.fromtimestamp(calendar.timegm(timestamp_value), tz=timezone.utc)
+    elif isinstance(timestamp_value, datetime):
+        datetime_obj = timestamp_value if timestamp_value.tzinfo else timestamp_value.replace(tzinfo=timezone.utc)
     else:
-        raise TypeError(f"Unsupported timestamp type: {type(ts_value)!r}")
-    return to_mediawiki_sig_timestamp(dt)
+        raise TypeError(f"Unsupported timestamp type: {type(timestamp_value)!r}")
+    return to_mediawiki_sig_timestamp(datetime_obj)
 
 
-def format_entry(ev: dict, topic_code: str) -> str:
+def format_entry(log_event: dict, topic_code: str) -> str:
     """
-    Render one entry line with nowiki on fields that could contain pipes or template braces.
-    """
-    logid = ev.get("logid")
-    user = ev.get("user") or ""
-    title = ev.get("title") or ""
-    ts_value = ev.get("timestamp")
-    comment = ev.get("comment") or ""
+    Render a protection log event as a template invocation string.
 
-    date_str = to_mediawiki_timestamp(ts_value)
-    action_str = build_action_string(ev)
+    Generates wikitext in the format:
+    {{User:ClerkBot/AE entry|logid=...|admin=...|page=...|date=...|action=...|summary=...|topic=...}}
+
+    Args:
+        log_event: A protection log event dict from the MediaWiki API
+        topic_code: The detected CTOP topic code, or empty string if none detected
+
+    Returns:
+        A formatted template invocation string ready to append to the target page
+    """
+    logid = log_event.get("logid")
+    user = log_event.get("user") or ""
+    title = log_event.get("title") or ""
+    timestamp_value = log_event.get("timestamp")
+    comment = log_event.get("comment") or ""
+
+    date_str = to_mediawiki_timestamp(timestamp_value)
+    action_str = build_action_string(log_event)
 
     # Parameters are used directly in template format without nowiki wrapping
     action_param = action_str
@@ -398,8 +451,18 @@ def format_entry(ev: dict, topic_code: str) -> str:
 # --------- Notify admin module ---------
 def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> str:
     """
-    Build the single wikitext notification block for one admin.
-    items: list of (logid, utc_date_sig, protection_page_title)
+    Build a wikitext notification message for an admin about unclassified protection actions.
+
+    Generates a message using the User:ClerkBot/AE notification template with a bulleted
+    list of protection actions that could not be automatically categorized by topic.
+
+    Args:
+        admin: The username of the admin to notify
+        items: List of (logid, utc_date_sig, protection_page_title) tuples for each
+               unclassified action performed by this admin
+
+    Returns:
+        A formatted wikitext notification ready to post to the admin's talk page
     """
     bullets = "\n".join(
         f"* [[Special:Redirect/logid/{logid}|{date_sig}]] ([[{title}]])"
@@ -429,13 +492,13 @@ def fetch_bot_usernames(site: mwclient.Site) -> Set[str]:
                 aulimit="max",
                 **cont,
             )
-        except mwclient.errors.APIError as e:
-            log.error("Failed to fetch bot usernames: %s", e)
+        except mwclient.errors.APIError as api_error:
+            log.error("Failed to fetch bot usernames: %s", api_error)
             break
 
         users = ((resp or {}).get("query") or {}).get("allusers") or []
-        for u in users:
-            name = u.get("name")
+        for user in users:
+            name = user.get("name")
             if name:
                 bot_usernames.add(name)
 
@@ -449,30 +512,47 @@ def fetch_bot_usernames(site: mwclient.Site) -> Set[str]:
 
 def _notify_admins(
     site: mwclient.Site,
-    grouped: Dict[str, List[Tuple[int, str, str]]],
+    unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]],
     token: str,
     bot_usernames: Set[str],
 ) -> None:
     """
-    Send one notification per admin in 'grouped'.
-    grouped maps admin -> list[(logid, date_sig, title)] for NEWLY LOGGED, UNCLASSIFIED actions.
-    Honors NOTIFY_MODE: "false" (no-op), "debug" (write to DRYRUN_PAGE), "true" (post to admin talk).
+    Notify admins about protection actions that could not be automatically categorized.
+
+    For each admin who performed unclassified protection actions, posts a notification
+    to their talk page (or to a debug page) asking them to review the categorization.
+    Bot accounts are automatically excluded from notifications.
+
+    Behavior depends on NOTIFY_MODE:
+      - DISABLED: No notifications sent, returns immediately
+      - DEBUG: All notifications appended to DRYRUN_PAGE for testing
+      - ENABLED: Notifications posted to individual admin talk pages
+
+    Args:
+        site: The mwclient Site connection
+        unclassified_by_admin: Map of admin username -> list of (logid, date_sig, title)
+                               for actions that were newly logged but lack a topic code
+        token: CSRF token for API edits
+        bot_usernames: Set of usernames with bot rights (excluded from notifications)
+
+    Returns:
+        None
     """
-    if NOTIFY_MODE == "false":
+    if NOTIFY_MODE == NotifyMode.DISABLED:
         log.info("Notify-admin module disabled (CLERKBOT_NOTIFY_ADMINS=false).")
         return
-    if not grouped:
+    if not unclassified_by_admin:
         log.info("Notify-admin module: no unclassified actions to notify.")
         return
 
-    for admin, items in grouped.items():
+    for admin, items in unclassified_by_admin.items():
         if not items:
             continue
         if admin in bot_usernames:
             log.debug("Notify-admin: skipping bot account %s", admin)
             continue
         text = _build_notification_text(admin, items)
-        if NOTIFY_MODE == "debug":
+        if NOTIFY_MODE == NotifyMode.DEBUG:
             dest_title = DRYRUN_PAGE
             summary = f"DEBUG: AE protection categorization notice for {admin}"
         else:
@@ -488,42 +568,35 @@ def _notify_admins(
                 bot=True,
                 token=token,
             )
-        except mwclient.errors.APIError as e:
-            log.error("Failed to notify %s at %s: %s", admin, dest_title, e)
+        except mwclient.errors.APIError as api_error:
+            log.error("Failed to notify %s at %s: %s", admin, dest_title, api_error)
 
 
-def main() -> int:
-    # Load topic detection data
-    try:
-        detector = load_topics(TOPICS_PATH)
-    except Exception as e:
-        log.error("Failed to load CTOP topics data from %s: %s", TOPICS_PATH, e)
-        return 2
+def _process_new_log_entries(
+    site: mwclient.Site,
+    detector: TopicDetector,
+    last_updated_dt: datetime,
+    existing_logids: set,
+) -> Tuple[List[str], Dict[str, List[Tuple[int, str, str]]]]:
+    """
+    Process new protection log events and generate entry strings.
 
-    site = connect_site()
-    bot_usernames = fetch_bot_usernames(site)
-    page = fetch_target_page(site, TARGET_PAGE)
-    if not page.exists:
-        log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", TARGET_PAGE)
-        return 2
+    Args:
+        site: The mwclient Site connection
+        detector: TopicDetector instance for categorizing actions
+        last_updated_dt: Only process events after this timestamp
+        existing_logids: Set of log IDs already present on the page
 
-    text = page.text()
-    last_updated_dt = extract_last_updated(text)
-    if not last_updated_dt:
-        log.error("Could not find 'Last updated: ... (UTC)' line at top of %s", TARGET_PAGE)
-        return 2
-
-    existing_logids = extract_existing_logids(text)
-    log.info("Parsed last updated: %s", last_updated_dt.isoformat())
-    log.info("Found %d existing entries on page (by logid).", len(existing_logids))
-
+    Returns:
+        Tuple of (new_entries, unclassified_by_admin) where:
+          - new_entries: List of formatted template strings to append
+          - unclassified_by_admin: Map of admin -> list of unclassified actions
+    """
     new_entries: List[str] = []
-    appended_logids: List[int] = []
-    # For notify-admin module: admin -> list of (logid, date_sig, title) where topic was not determinable
     unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]] = {}
 
-    for ev in enumerate_protect_logevents(site, last_updated_dt):
-        logid = ev.get("logid")
+    for log_event in enumerate_protect_logevents(site, last_updated_dt):
+        logid = log_event.get("logid")
         if logid is None:
             continue
         if int(logid) in existing_logids:
@@ -531,57 +604,85 @@ def main() -> int:
             continue
 
         # Arbitration enforcement filter
-        comment = ev.get("comment") or ""
+        comment = log_event.get("comment") or ""
         if not is_arbitration_enforcement(comment):
             continue
 
         topic_code = detector.detect(comment)
-        entry_line = format_entry(ev, topic_code)
+        entry_line = format_entry(log_event, topic_code)
         new_entries.append(entry_line)
-        appended_logids.append(int(logid))
-        # Track unclassified (no topic determined) for notifications
-        if (topic_code or "").strip() == "":
-            admin = (ev.get("user") or "").strip()
+
+        # Track unclassified actions (no topic determined) for admin notifications
+        if not topic_code or not topic_code.strip():
+            admin = (log_event.get("user") or "").strip()
             if admin:
-                ts_value = ev.get("timestamp")
-                date_sig = to_mediawiki_timestamp(ts_value)
-                title = ev.get("title") or ""
+                timestamp_value = log_event.get("timestamp")
+                date_sig = to_mediawiki_timestamp(timestamp_value)
+                title = log_event.get("title") or ""
                 unclassified_by_admin.setdefault(admin, []).append((int(logid), date_sig, title))
 
+    return new_entries, unclassified_by_admin
+
+
+def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
+    """
+    Build updated page content with new entries and updated timestamp.
+
+    Args:
+        text: Current page text
+        new_entries: List of new entry template strings to append
+
+    Returns:
+        Updated page text with new entries, updated timestamp, and footer repositioned
+    """
     # Build the new page content in-memory so we can do ONE edit that:
     # - appends new entries
-    # - (optionally) updates the timestamp
+    # - updates the timestamp
+    # This atomic approach minimizes page history entries and prevents race conditions
     new_text = text
 
-    # Update timestamp in the same edit.
+    # Update the "Last updated" timestamp to current time
     now_line = "Last updated: " + to_mediawiki_sig_timestamp(datetime.now(tz=timezone.utc))
-    new_text, n = LAST_UPDATED_RE.subn(now_line, new_text, count=1)
-    if n != 1:
+    new_text, num_replacements = LAST_UPDATED_RE.subn(now_line, new_text, count=1)
+    if num_replacements != 1:
         log.warning("Did not find 'Last updated' line to update.")
 
-    # Remove existing footer before appending new entries
+    # Temporarily remove the footer marker so we can append new entries at the true end
+    # The footer must appear after ALL entries to maintain proper page structure
     new_text = new_text.replace(FOOTER_MARK, "")
-    
-    # Append new entries (if any).
+
+    # Append new entries (if any) after the last existing entry
     if new_entries:
         append_block = "\n" + "\n".join(new_entries) + "\n"
         new_text = new_text + append_block
     else:
         log.info("No new AE protection actions to append.")
 
-    # Add footer back at the end after all entries
+    # Re-add the footer marker at the very end, after all entries
+    # This ensures the page structure remains: header -> entries -> footer
     new_text = new_text + FOOTER_MARK + "\n"
 
-    # If nothing changed at all, bail out.
-    if new_text == text:
-        log.info("Nothing to do: no new entries and no timestamp update.")
-        return 0
+    return new_text
 
-    # Commit a single edit containing all changes.
-    edit_summary = ("updating AE protection log"
-                    f"{f' ({len(new_entries)} new entries)' if new_entries else ''}"
-                     " ([[User:ClerkBot#t3|task 3]], [[Wikipedia:Bots/Requests for approval/ClerkBot|BRFA in trial]])")
-    
+
+def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str]) -> None:
+    """
+    Save the updated page text to Wikipedia.
+
+    Args:
+        site: The mwclient Site connection
+        new_text: The complete new page text to save
+        new_entries: List of new entries (used for edit summary)
+
+    Returns:
+        None
+    """
+    edit_summary = (
+        f"updating AE protection log"
+        f"{f' ({len(new_entries)} new entries)' if new_entries else ''}"
+        " ([[User:ClerkBot#t3|task 3]], [[Wikipedia:Bots/Requests for approval/ClerkBot|BRFA in trial]])"
+    )
+
     token = site.get_token('csrf')
     log.info("Saving single edit to %s (%s)", TARGET_PAGE, edit_summary)
     res = site.api(
@@ -593,21 +694,74 @@ def main() -> int:
         token=token,
     )
     log.debug("Edit API response: %r", res)
-    # Run notify-admin module after attempting the main page save.
-    # Only notify for actions that were newly appended in this run.
+
+
+def main() -> int:
+    """
+    Main entry point for the ClerkBot AE protection log updater.
+
+    Returns:
+        0 on success, 2 on configuration/setup error, 1 on API error
+    """
+    # Load topic detection data
+    try:
+        detector = load_topics(TOPICS_PATH)
+    except Exception as error:
+        log.error("Failed to load CTOP topics data from '%s': %s", TOPICS_PATH, error)
+        return 2
+
+    # Connect to Wikipedia and load the target page
+    site = connect_site()
+    bot_usernames = fetch_bot_usernames(site)
+    page = fetch_target_page(site, TARGET_PAGE)
+    if not page.exists:
+        log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", TARGET_PAGE)
+        return 2
+
+    # Parse existing page content
+    text = page.text()
+    last_updated_dt = extract_last_updated(text)
+    if not last_updated_dt:
+        log.error("Could not find 'Last updated: ... (UTC)' line at top of '%s'", TARGET_PAGE)
+        return 2
+
+    existing_logids = extract_existing_logids(text)
+    log.info("Parsed last updated: %s", last_updated_dt.isoformat())
+    log.info("Found %d existing entries on page (by logid).", len(existing_logids))
+
+    # Process new log entries
+    new_entries, unclassified_by_admin = _process_new_log_entries(
+        site, detector, last_updated_dt, existing_logids
+    )
+
+    # Build updated page text
+    new_text = _build_updated_page_text(text, new_entries)
+
+    # If nothing changed at all, bail out
+    if new_text == text:
+        log.info("Nothing to do: no new entries and no timestamp update.")
+        return 0
+
+    # Save the updated page
+    _save_page_update(site, new_text, new_entries)
+
+    # Run notify-admin module after attempting the main page save
+    # Only notify for actions that were newly appended in this run
     if new_entries and unclassified_by_admin:
+        token = site.get_token('csrf')
         _notify_admins(site, unclassified_by_admin, token, bot_usernames)
     else:
         log.info("Notify-admin module: nothing to notify.")
+
     return 0
 
 
 if __name__ == "__main__":
     try:
         sys.exit(main())
-    except mwclient.errors.APIError as e:
-        log.error("MediaWiki API error: %s", e)
+    except mwclient.errors.APIError as api_error:
+        log.error("MediaWiki API error: %s", api_error)
         sys.exit(1)
-    except Exception as e:
-        log.exception("Unhandled exception: %s", e)
+    except Exception as error:
+        log.exception("Unhandled exception: %s", error)
         sys.exit(1)
