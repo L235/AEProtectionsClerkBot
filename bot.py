@@ -13,7 +13,7 @@ System Architecture:
 - Categorizes actions by contentious topic (CTOP) codes using configurable heuristics
 - Appends new entries to a target page while maintaining proper template structure
 - Ensures {{/header}} appears before entries and {{/footer}} after all entries
-- Optionally updates the page's "Last updated" timestamp
+- Updates the page's "Last updated" timestamp
 
 Key Features:
 - Duplicate detection using log IDs to prevent re-logging existing entries
@@ -635,7 +635,7 @@ def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
     Returns:
         Updated page text with new entries, updated timestamp, and footer repositioned
     """
-    # Build the new page content in-memory so we can do ONE edit that:
+    # Build the new page content in-memory so we can do one edit that:
     # - appends new entries
     # - updates the timestamp
     # This atomic approach minimizes page history entries and prevents race conditions
@@ -653,7 +653,7 @@ def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
 
     # Append new entries (if any) after the last existing entry
     if new_entries:
-        append_block = "\n" + "\n".join(new_entries) + "\n"
+        append_block = "\n".join(new_entries) + "\n"
         new_text = new_text + append_block
     else:
         log.info("No new AE protection actions to append.")
@@ -661,6 +661,9 @@ def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
     # Re-add the footer marker at the very end, after all entries
     # This ensures the page structure remains: header -> entries -> footer
     new_text = new_text + FOOTER_MARK + "\n"
+
+    # Clean invisible unicode characters that could cause display issues
+    new_text = clean_invisible_unicode(new_text)
 
     return new_text
 
@@ -688,7 +691,7 @@ def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str]
     res = site.api(
         'edit',
         title=TARGET_PAGE,
-        text=clean_invisible_unicode(new_text),
+        text=new_text,
         summary=edit_summary,
         bot=True,
         token=token,
