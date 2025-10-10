@@ -13,7 +13,7 @@ System Architecture:
 - Categorizes actions by contentious topic (CTOP) codes using configurable heuristics
 - Appends new entries to a target page while maintaining proper template structure
 - Ensures {{/header}} appears before entries and {{/footer}} after all entries
-- Optionally updates the page's "Last updated" timestamp
+- Updates the page's "Last updated" timestamp
 
 Key Features:
 - Duplicate detection using log IDs to prevent re-logging existing entries
@@ -548,9 +548,9 @@ def main() -> int:
                 title = ev.get("title") or ""
                 unclassified_by_admin.setdefault(admin, []).append((int(logid), date_sig, title))
 
-    # Build the new page content in-memory so we can do ONE edit that:
+    # Build the new page content in-memory so we can do one edit that:
     # - appends new entries
-    # - (optionally) updates the timestamp
+    # - updates the timestamp
     new_text = text
 
     # Update timestamp in the same edit.
@@ -571,11 +571,9 @@ def main() -> int:
 
     # Add footer back at the end after all entries
     new_text = new_text + FOOTER_MARK + "\n"
-
-    # If nothing changed at all, bail out.
-    if new_text == text:
-        log.info("Nothing to do: no new entries and no timestamp update.")
-        return 0
+    
+    # clean invisible unicode
+    new_text = clean_invisible_unicode(new_text)
 
     # Commit a single edit containing all changes.
     edit_summary = ("updating AE protection log"
@@ -587,7 +585,7 @@ def main() -> int:
     res = site.api(
         'edit',
         title=TARGET_PAGE,
-        text=clean_invisible_unicode(new_text),
+        text=new_text,
         summary=edit_summary,
         bot=True,
         token=token,
