@@ -564,7 +564,7 @@ def main() -> int:
     
     # Append new entries (if any).
     if new_entries:
-        append_block = "\n" + "\n".join(new_entries) + "\n"
+        append_block = "\n".join(new_entries) + "\n"
         new_text = new_text + append_block
     else:
         log.info("No new AE protection actions to append.")
