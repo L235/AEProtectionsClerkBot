@@ -56,7 +56,7 @@ from pathlib import Path
 import time
 import calendar
 from typing import Dict, Iterable, List, Optional, Tuple, Set
-from urllib.request import urlopen
+from urllib.request import urlopen, Request
 
 from typing import Match
 import mwclient
@@ -309,15 +309,14 @@ class TopicDetector:
 def load_topics(url: str) -> TopicDetector:
     """
     Load topic detection configuration from a URL.
-
     Args:
         url: URL to fetch the JSON configuration from
-
     Returns:
         TopicDetector instance configured with the fetched data
     """
     log.info("Fetching topics configuration from %s", url)
-    with urlopen(url) as response:
+    request = Request(url, headers={'User-Agent': USER_AGENT})
+    with urlopen(request) as response:
         data = json.loads(response.read().decode("utf-8"))
     codes = data.get("codes", [])
     # JSON now provides mapping: page -> code
@@ -326,7 +325,7 @@ def load_topics(url: str) -> TopicDetector:
     if not codes or not page_to_code:
         raise ValueError("Configuration JSON missing required keys 'codes' or 'specific_pages'")
     return TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
-
+  
 
 # --------- Core logic ---------
 
