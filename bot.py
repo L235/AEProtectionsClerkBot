@@ -275,14 +275,7 @@ class TopicDetector:
         comment = (comment or "")
         lower = self._norm(comment)
 
-        # Heuristic (1): bare code token (e.g., "AE action: BLP")
-        # Matches topic codes when they appear as standalone words, not embedded in longer words
-        for code in self.codes:
-            if self._code_res[code].search(lower):
-                if code not in ("at", ): # temporary fix for "at"
-                    return code
-
-        # Heuristic (2): WP:CT/<code> (or WP:CTOP/<code>) shortcuts (e.g., "WP:CT/AP", "WP:CTOP/AP", "Wikipedia:CTOP/AP")
+        # Heuristic (1): WP:CT/<code> (or WP:CTOP/<code>) shortcuts (e.g., "WP:CT/AP", "WP:CTOP/AP", "Wikipedia:CTOP/AP")
         # These are Wikipedia shortcuts commonly used in edit summaries
         match = self._ctop_shortcut_re.search(lower)
         if match:
@@ -290,18 +283,25 @@ class TopicDetector:
             if code in self.codes:
                 return code
 
-        # Heuristic (3): specific page string appears anywhere in comment
+        # Heuristic (2): specific page string appears anywhere in comment
         # Detects full page names like "Wikipedia:Contentious topics/American politics"
         # These may appear as links or plain text in edit summaries
         for page_norm, code in self.page_to_code.items():
             if page_norm in lower:
                 return code
 
-        # Heuristic (4): override strings for special cases and legacy abbreviations
+        # Heuristic (3): override strings for special cases and legacy abbreviations
         # Handles historical or non-standard references (e.g., "arbind" -> "sa")
         for override, code in self.override_strings.items():
             if override in lower:
                 return code
+
+        # Heuristic (4): bare code token (e.g., "AE action: BLP")
+        # Matches topic codes when they appear as standalone words, not embedded in longer words
+        for code in self.codes:
+            if self._code_res[code].search(lower):
+                if code not in ("at", ): # temporary fix for "at"
+                    return code
 
         # No topic detected - return empty string
         return ""
