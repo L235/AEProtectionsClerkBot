@@ -267,21 +267,22 @@ class TopicDetector:
             code: re.compile(r"(?i)(?<![A-Za-z])" + re.escape(code) + r"(?![A-Za-z])")
             for code in self.codes
         }
-        # Regex to catch WP:CT/<code> with optional spaces around the colon and slash
-        self._ctop_shortcut_re = re.compile(r"(?i)wp\s*:\s*ct\s*/\s*([A-Za-z-]+)")
+        # Regex to catch WP:CT/<code>, WP:CTOP/<code>, Wikipedia:CT/<code>, Wikipedia:CTOP/<code>
+        self._ctop_shortcut_re = re.compile(r"(?i)(?:wp|wikipedia):ct(?:op)?/([A-Za-z-]+)")
         self.override_strings = override_strings
 
     def detect(self, comment: str) -> str:
         comment = (comment or "")
         lower = self._norm(comment)
 
-        # Heuristic (1): bare code token (e.g., "CTOP:AP" or "restricted to AP")
+        # Heuristic (1): bare code token (e.g., "AE action: BLP")
         # Matches topic codes when they appear as standalone words, not embedded in longer words
         for code in self.codes:
             if self._code_res[code].search(lower):
-                return code
+                if code not in ("at", ): # temporary fix for "at"
+                    return code
 
-        # Heuristic (2): WP:CT/<code> shortcuts (e.g., "WP:CT/AP" or "WP: CT / AP")
+        # Heuristic (2): WP:CT/<code> (or WP:CTOP/<code>) shortcuts (e.g., "WP:CT/AP", "WP:CTOP/AP", "Wikipedia:CTOP/AP")
         # These are Wikipedia shortcuts commonly used in edit summaries
         match = self._ctop_shortcut_re.search(lower)
         if match:
