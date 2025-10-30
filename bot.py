@@ -566,14 +566,14 @@ def _notify_admins(
             summary = f"DEBUG: AE protection categorization notice for {admin}"
         else:
             dest_title = f"User talk:{admin}"
-            summary = "adding AE protection categorization notice ([[User:ClerkBot#t3|task 3]], [[Wikipedia:Bots/Requests for approval/ClerkBot|BRFA in trial]])"
+            summary = "adding AE protection categorization notice ([[User:ClerkBot#t3|bot task 3]])"
         try:
             log.info("Posting notification (%d item(s)) to %s", len(items), dest_title)
             site.api(
                 "edit",
                 title=dest_title,
                 appendtext="\n" + text + "\n",
-                summary=summary + " (bot)",
+                summary=summary,
                 bot=True,
                 token=token,
             )
@@ -692,7 +692,7 @@ def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str]
     edit_summary = (
         f"updating AE protection log"
         f"{f' ({len(new_entries)} new entries)' if new_entries else ''}"
-        " ([[User:ClerkBot#t3|task 3]], [[Wikipedia:Bots/Requests for approval/ClerkBot|BRFA in trial]])"
+        " ([[User:ClerkBot#t3|bot task 3]])"
     )
 
     token = site.get_token('csrf')
