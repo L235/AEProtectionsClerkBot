@@ -124,11 +124,12 @@ AE_TRIGGERS = [
     "arbcom",
     "ctop",
     "ct/",
-    "30/500",
     "contentious topic",
     "blpct",
     "blpds",
     "arbpia",
+    "wp:ae",
+    "wikipedia:ae",
 ]
 
 # Regex to find the "Last updated: ..." line produced by ~~~~~ format.
