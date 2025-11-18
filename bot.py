@@ -128,8 +128,12 @@ AE_TRIGGERS = [
     "blpct",
     "blpds",
     "arbpia",
-    "wp:ae",
-    "wikipedia:ae",
+    "wp:ae ", # bodge to remove "WP:AELECT"
+    "wikipedia:ae ",
+    "wp:ae|",
+    "wikipedia:ae|",
+    "wp:ae]",
+    "wikipedia:ae]",
 ]
 
 # Regex to find the "Last updated: ..." line produced by ~~~~~ format.
