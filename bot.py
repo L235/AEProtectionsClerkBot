@@ -8,7 +8,8 @@ logging mechanism for Wikipedia administrators to maintain a centralized record 
 protection actions taken under arbitration enforcement authority.
 
 System Architecture:
-- Monitors MediaWiki's protection log via the API using mwclient library
+- Monitors MediaWiki's protection log (type=protect) and pending changes log (type=stable)
+  via the API using mwclient library
 - Filters log entries to identify arbitration enforcement actions using keyword detection
 - Categorizes actions by contentious topic (CTOP) codes using configurable heuristics
 - Appends new entries to a target page while maintaining proper template structure
@@ -357,9 +358,11 @@ def enumerate_protect_logevents(
     """
     Iterate logevents (type=protect) newer than start_utc. Skip 'unprotect' and 'move_prot' actions.
     mwclient handles API continuation internally.
+
+    See also: enumerate_stable_logevents() for pending changes protections.
     """
     start_iso = iso8601_from_dt(start_utc)
-    log.info("Fetching logevents from %s (dir=newer)", start_iso)
+    log.info("Fetching protect logevents from %s (dir=newer)", start_iso)
 
     # props include user, timestamp, comment, details/params
     # mwclient uses 'dir' (older/newer), 'type', 'start'
@@ -370,6 +373,27 @@ def enumerate_protect_logevents(
         yield log_event
 
 
+def enumerate_stable_logevents(
+    site: mwclient.Site,
+    start_utc: datetime,
+) -> Iterable[dict]:
+    """
+    Iterate logevents (type=stable) newer than start_utc for pending changes protections.
+    Skip 'reset' actions (removal of pending changes protection).
+    mwclient handles API continuation internally.
+
+    See also: enumerate_protect_logevents() for regular protections.
+    """
+    start_iso = iso8601_from_dt(start_utc)
+    log.info("Fetching stable (pending changes) logevents from %s (dir=newer)", start_iso)
+
+    for log_event in site.logevents(type="stable", start=start_iso, dir="newer"):
+        action = log_event.get("action")
+        if action == "reset":
+            continue  # skip pending changes protection removals
+        yield log_event
+
+
 def build_action_string(log_event: dict) -> str:
     """
     Build a human-readable action string from a protection log event.
@@ -377,6 +401,7 @@ def build_action_string(log_event: dict) -> str:
     ACTION is constructed as:
       - if action == 'protect': "added protection (<description>)"
       - if action == 'modify':  "changed protection level (<description>)"
+      - if action == 'config' (stable/pending changes): "added pending changes protection (<level>)"
       - otherwise: use the raw action string.
 
     Args:
@@ -386,8 +411,17 @@ def build_action_string(log_event: dict) -> str:
         A formatted action string describing what protection was applied
     """
     action = log_event.get("action", "")
-    desc = ""
+    log_type = log_event.get("type", "")
     params = log_event.get("params") or {}
+
+    # Handle pending changes (stable) log events
+    if log_type == "stable" and action == "config":
+        autoreview = params.get("autoreview") or ""
+        if autoreview:
+            return f"added pending changes protection (autoreview={autoreview})"
+        return "added pending changes protection"
+
+    # Handle regular protection log events
     desc = params.get("description") or ""
     if action == "protect":
         base = "added protection"
@@ -586,6 +620,49 @@ def _notify_admins(
             log.error("Failed to notify %s at %s: %s", admin, dest_title, api_error)
 
 
+def _process_single_log_event(
+    log_event: dict,
+    detector: TopicDetector,
+    existing_logids: set,
+    new_entries: List[str],
+    unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]],
+) -> None:
+    """
+    Process a single log event and append to new_entries if it's an AE action.
+
+    Args:
+        log_event: A log event dict from the MediaWiki API
+        detector: TopicDetector instance for categorizing actions
+        existing_logids: Set of log IDs already present on the page
+        new_entries: List to append new entry strings to (modified in place)
+        unclassified_by_admin: Map to track unclassified actions (modified in place)
+    """
+    logid = log_event.get("logid")
+    if logid is None:
+        return
+    if int(logid) in existing_logids:
+        # Already logged
+        return
+
+    # Arbitration enforcement filter
+    comment = log_event.get("comment") or ""
+    if not is_arbitration_enforcement(comment):
+        return
+
+    topic_code = detector.detect(comment)
+    entry_line = format_entry(log_event, topic_code)
+    new_entries.append(entry_line)
+
+    # Track unclassified actions (no topic determined) for admin notifications
+    if not topic_code or not topic_code.strip():
+        admin = (log_event.get("user") or "").strip()
+        if admin:
+            timestamp_value = log_event.get("timestamp")
+            date_sig = to_mediawiki_timestamp(timestamp_value)
+            title = log_event.get("title") or ""
+            unclassified_by_admin.setdefault(admin, []).append((int(logid), date_sig, title))
+
+
 def _process_new_log_entries(
     site: mwclient.Site,
     detector: TopicDetector,
@@ -593,7 +670,7 @@ def _process_new_log_entries(
     existing_logids: set,
 ) -> Tuple[List[str], Dict[str, List[Tuple[int, str, str]]]]:
     """
-    Process new protection log events and generate entry strings.
+    Process new protection log events (both regular and pending changes) and generate entry strings.
 
     Args:
         site: The mwclient Site connection
@@ -609,31 +686,17 @@ def _process_new_log_entries(
     new_entries: List[str] = []
     unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]] = {}
 
+    # Process regular protection log events (type=protect)
     for log_event in enumerate_protect_logevents(site, last_updated_dt):
-        logid = log_event.get("logid")
-        if logid is None:
-            continue
-        if int(logid) in existing_logids:
-            # Already logged
-            continue
+        _process_single_log_event(
+            log_event, detector, existing_logids, new_entries, unclassified_by_admin
+        )
 
-        # Arbitration enforcement filter
-        comment = log_event.get("comment") or ""
-        if not is_arbitration_enforcement(comment):
-            continue
-
-        topic_code = detector.detect(comment)
-        entry_line = format_entry(log_event, topic_code)
-        new_entries.append(entry_line)
-
-        # Track unclassified actions (no topic determined) for admin notifications
-        if not topic_code or not topic_code.strip():
-            admin = (log_event.get("user") or "").strip()
-            if admin:
-                timestamp_value = log_event.get("timestamp")
-                date_sig = to_mediawiki_timestamp(timestamp_value)
-                title = log_event.get("title") or ""
-                unclassified_by_admin.setdefault(admin, []).append((int(logid), date_sig, title))
+    # Process pending changes protection log events (type=stable)
+    for log_event in enumerate_stable_logevents(site, last_updated_dt):
+        _process_single_log_event(
+            log_event, detector, existing_logids, new_entries, unclassified_by_admin
+        )
 
     return new_entries, unclassified_by_admin
 
