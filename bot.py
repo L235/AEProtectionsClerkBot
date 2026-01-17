@@ -393,13 +393,32 @@ def enumerate_stable_logevents(
         yield log_event
 
 
+def format_expiry(expiry: str) -> str:
+    """
+    Format a MediaWiki expiry string for human-readable display.
+
+    Args:
+        expiry: Expiry in YYYYMMDDHHMMSS format or "infinity"
+
+    Returns:
+        Human-readable string like "17:03, 27 February 2026" or "indefinite"
+    """
+    if not expiry or expiry == "infinity":
+        return "indefinite"
+    try:
+        dt = datetime.strptime(expiry, "%Y%m%d%H%M%S")
+        return dt.strftime("%H:%M, ") + str(dt.day) + dt.strftime(" %B %Y")
+    except ValueError:
+        return expiry  # fallback to raw value
+
+
 def build_action_string(log_event: dict) -> str:
     """
     Build a human-readable action string from a protection log event.
 
     ACTION is constructed as:
-      - if type == 'stable' and action == 'config': "added pending changes protection (<level>)"
-      - if type == 'stable' and action == 'modify': "changed pending changes level (<level>)"
+      - if type == 'stable' and action == 'config': "added pending changes protection (<details>)"
+      - if type == 'stable' and action == 'modify': "changed pending changes level (<details>)"
       - if action == 'protect': "added protection (<description>)"
       - if action == 'modify':  "changed protection level (<description>)"
       - otherwise: use the raw action string.
@@ -417,9 +436,17 @@ def build_action_string(log_event: dict) -> str:
     # Handle pending changes (stable) log events
     if log_type == "stable" and action in ("config", "modify"):
         autoreview = params.get("autoreview") or ""
+        expiry = params.get("expiry") or ""
         base = "added pending changes protection" if action == "config" else "changed pending changes level"
+
+        details = []
         if autoreview:
-            return f"{base} (autoreview={autoreview})"
+            details.append(f"autoreview={autoreview}")
+        if expiry:
+            details.append(f"expires {format_expiry(expiry)}")
+
+        if details:
+            return f"{base} ({', '.join(details)})"
         return base
 
     # Handle regular protection log events
