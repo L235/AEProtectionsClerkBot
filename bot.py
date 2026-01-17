@@ -8,8 +8,7 @@ logging mechanism for Wikipedia administrators to maintain a centralized record 
 protection actions taken under arbitration enforcement authority.
 
 System Architecture:
-- Monitors MediaWiki's protection log (type=protect) and pending changes log (type=stable)
-  via the API using mwclient library
+- Monitors MediaWiki's protection log (type=protect) and pending changes log (type=stable) via the API
 - Filters log entries to identify arbitration enforcement actions using keyword detection
 - Categorizes actions by contentious topic (CTOP) codes using configurable heuristics
 - Appends new entries to a target page while maintaining proper template structure
@@ -379,7 +378,7 @@ def enumerate_stable_logevents(
 ) -> Iterable[dict]:
     """
     Iterate logevents (type=stable) newer than start_utc for pending changes protections.
-    Skip 'reset' actions (removal of pending changes protection).
+    Skip 'reset' (removal) and 'move_stable' (page move) actions.
     mwclient handles API continuation internally.
 
     See also: enumerate_protect_logevents() for regular protections.
@@ -389,8 +388,8 @@ def enumerate_stable_logevents(
 
     for log_event in site.logevents(type="stable", start=start_iso, dir="newer"):
         action = log_event.get("action")
-        if action == "reset":
-            continue  # skip pending changes protection removals
+        if action in ("reset", "move_stable"):
+            continue  # skip removals and page move actions
         yield log_event
 
 
@@ -399,9 +398,10 @@ def build_action_string(log_event: dict) -> str:
     Build a human-readable action string from a protection log event.
 
     ACTION is constructed as:
+      - if type == 'stable' and action == 'config': "added pending changes protection (<level>)"
+      - if type == 'stable' and action == 'modify': "changed pending changes level (<level>)"
       - if action == 'protect': "added protection (<description>)"
       - if action == 'modify':  "changed protection level (<description>)"
-      - if action == 'config' (stable/pending changes): "added pending changes protection (<level>)"
       - otherwise: use the raw action string.
 
     Args:
@@ -415,11 +415,12 @@ def build_action_string(log_event: dict) -> str:
     params = log_event.get("params") or {}
 
     # Handle pending changes (stable) log events
-    if log_type == "stable" and action == "config":
+    if log_type == "stable" and action in ("config", "modify"):
         autoreview = params.get("autoreview") or ""
+        base = "added pending changes protection" if action == "config" else "changed pending changes level"
         if autoreview:
-            return f"added pending changes protection (autoreview={autoreview})"
-        return "added pending changes protection"
+            return f"{base} (autoreview={autoreview})"
+        return base
 
     # Handle regular protection log events
     desc = params.get("description") or ""
@@ -663,6 +664,22 @@ def _process_single_log_event(
             unclassified_by_admin.setdefault(admin, []).append((int(logid), date_sig, title))
 
 
+def _get_event_sort_key(log_event: dict) -> float:
+    """
+    Extract a sortable timestamp from a log event.
+    Returns seconds since epoch for consistent sorting across event types.
+    """
+    timestamp_value = log_event.get("timestamp")
+    if isinstance(timestamp_value, time.struct_time):
+        return calendar.timegm(timestamp_value)
+    elif isinstance(timestamp_value, str):
+        dt = datetime.strptime(timestamp_value, "%Y-%m-%dT%H:%M:%SZ")
+        return dt.replace(tzinfo=timezone.utc).timestamp()
+    elif isinstance(timestamp_value, datetime):
+        return timestamp_value.timestamp()
+    return 0.0
+
+
 def _process_new_log_entries(
     site: mwclient.Site,
     detector: TopicDetector,
@@ -671,6 +688,7 @@ def _process_new_log_entries(
 ) -> Tuple[List[str], Dict[str, List[Tuple[int, str, str]]]]:
     """
     Process new protection log events (both regular and pending changes) and generate entry strings.
+    Events are merged and sorted chronologically before processing.
 
     Args:
         site: The mwclient Site connection
@@ -686,14 +704,16 @@ def _process_new_log_entries(
     new_entries: List[str] = []
     unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]] = {}
 
-    # Process regular protection log events (type=protect)
-    for log_event in enumerate_protect_logevents(site, last_updated_dt):
-        _process_single_log_event(
-            log_event, detector, existing_logids, new_entries, unclassified_by_admin
-        )
+    # Collect all events from both log types
+    all_events: List[dict] = []
+    all_events.extend(enumerate_protect_logevents(site, last_updated_dt))
+    all_events.extend(enumerate_stable_logevents(site, last_updated_dt))
 
-    # Process pending changes protection log events (type=stable)
-    for log_event in enumerate_stable_logevents(site, last_updated_dt):
+    # Sort by timestamp to maintain chronological order
+    all_events.sort(key=_get_event_sort_key)
+
+    # Process events in chronological order
+    for log_event in all_events:
         _process_single_log_event(
             log_event, detector, existing_logids, new_entries, unclassified_by_admin
         )
