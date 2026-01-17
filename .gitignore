@@ -1,5 +1,23 @@
 # Python virtual environment
 venv/
 
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Local configuration (may contain secrets)
+config.py
+
 # VS Code settings
 .vscode/
+
+# Environment files
+.env
+.env.*
+
+# IDE
+.idea/
+
+# OS files
+.DS_Store
