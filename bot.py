@@ -62,7 +62,6 @@ from mwclient.page import Page as MWPage
 
 from timestamp import (
     LAST_UPDATED_RE,
-    parse_mediawiki_sig_timestamp,
     to_mediawiki_sig_timestamp,
     extract_last_updated,
     iso8601_from_dt,
