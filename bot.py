@@ -315,8 +315,22 @@ def connect_site() -> mwclient.Site:
     return site
 
 
-def fetch_target_page(site: mwclient.Site, title: str) -> MWPage:
-    return site.pages[title]
+def fetch_target_page(site: mwclient.Site, title: str) -> Tuple[MWPage, int]:
+    """
+    Fetch target page and its current revision ID.
+
+    Args:
+        site: The mwclient Site connection
+        title: Page title to fetch
+
+    Returns:
+        Tuple of (page, base_revid) where base_revid is the current revision ID
+    """
+    page = site.pages[title]
+    # Get the current revision ID to use as baserevid in edit
+    revisions = list(page.revisions(limit=1))
+    base_revid = revisions[0]['revid'] if revisions else 0
+    return page, base_revid
 
 
 def enumerate_protect_logevents(
@@ -742,17 +756,21 @@ def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
     return new_text
 
 
-def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str]) -> None:
+def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str], base_revid: int) -> None:
     """
-    Save the updated page text to Wikipedia.
+    Save the updated page text to Wikipedia with edit conflict detection.
 
     Args:
         site: The mwclient Site connection
         new_text: The complete new page text to save
         new_entries: List of new entries (used for edit summary)
+        base_revid: The revision ID that the edit is based on (for conflict detection)
 
     Returns:
         None
+
+    Raises:
+        mwclient.errors.EditError: If an edit conflict occurs or other API error
     """
     edit_summary = (
         f"updating AE protection log"
@@ -761,16 +779,22 @@ def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str]
     )
 
     token = site.get_token('csrf')
-    log.info("Saving single edit to %s (%s)", TARGET_PAGE, edit_summary)
-    res = site.api(
-        'edit',
-        title=TARGET_PAGE,
-        text=new_text,
-        summary=edit_summary,
-        bot=True,
-        token=token,
-    )
-    log.debug("Edit API response: %r", res)
+    log.info("Saving single edit to %s (%s) [baserevid=%d]", TARGET_PAGE, edit_summary, base_revid)
+
+    try:
+        res = site.api(
+            'edit',
+            title=TARGET_PAGE,
+            text=new_text,
+            summary=edit_summary,
+            bot=True,
+            token=token,
+            baserevid=base_revid,
+        )
+        log.debug("Edit API response: %r", res)
+    except mwclient.errors.EditError as edit_error:
+        log.error("Edit conflict or error: %s", edit_error)
+        raise
 
 
 def main() -> int:
@@ -790,7 +814,7 @@ def main() -> int:
     # Connect to Wikipedia and load the target page
     site = connect_site()
     bot_usernames = fetch_bot_usernames(site)
-    page = fetch_target_page(site, TARGET_PAGE)
+    page, base_revid = fetch_target_page(site, TARGET_PAGE)
     if not page.exists:
         log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", TARGET_PAGE)
         return 2
@@ -820,7 +844,7 @@ def main() -> int:
         return 0
 
     # Save the updated page
-    _save_page_update(site, new_text, new_entries)
+    _save_page_update(site, new_text, new_entries, base_revid)
 
     # Run notify-admin module after attempting the main page save
     # Only notify for actions that were newly appended in this run
