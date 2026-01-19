@@ -44,11 +44,13 @@ The target page must begin with a line like:
   Last updated: 19:32, 19 August 2025 (UTC)
 """
 
+import calendar
 import json
 import logging
 import os
 import re
 import sys
+import time
 import unicodedata
 from datetime import datetime, timezone
 from enum import Enum
