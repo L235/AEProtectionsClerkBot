@@ -10,11 +10,14 @@ import pytest
 from bot import (
     is_arbitration_enforcement,
     build_action_string,
+    format_expiry,
+    extract_existing_logids,
+    _get_event_sort_key,
+)
+from timestamp import (
     parse_mediawiki_sig_timestamp,
     to_mediawiki_sig_timestamp,
     extract_last_updated,
-    extract_existing_logids,
-    _get_event_sort_key,
 )
 
 
@@ -91,6 +94,22 @@ class TestBuildActionString:
         }
         assert build_action_string(event) == "added pending changes protection (autoreview=autoconfirmed)"
 
+    def test_stable_config_action_with_expiry(self):
+        event = {
+            "type": "stable",
+            "action": "config",
+            "params": {"autoreview": "autoconfirmed", "expiry": "20260227170300"}
+        }
+        assert build_action_string(event) == "added pending changes protection (autoreview=autoconfirmed, expires 17:03, 27 February 2026)"
+
+    def test_stable_config_action_with_indefinite_expiry(self):
+        event = {
+            "type": "stable",
+            "action": "config",
+            "params": {"autoreview": "autoconfirmed", "expiry": "infinity"}
+        }
+        assert build_action_string(event) == "added pending changes protection (autoreview=autoconfirmed, expires indefinite)"
+
     def test_stable_config_without_autoreview(self):
         event = {
             "type": "stable",
@@ -133,7 +152,7 @@ class TestTimestampParsing:
         result = to_mediawiki_sig_timestamp(dt)
         assert result == "19:32, 19 August 2025 (UTC)"
 
-    def test_roundtrip(self):
+    def test_parse_format_roundtrip(self):
         original = "07:15, 3 January 2026 (UTC)"
         dt = parse_mediawiki_sig_timestamp(original)
         result = to_mediawiki_sig_timestamp(dt)
@@ -205,6 +224,11 @@ class TestGetEventSortKey:
         result = _get_event_sort_key(event)
         assert result == 0.0
 
+    def test_none_timestamp(self):
+        event = {"timestamp": None}
+        result = _get_event_sort_key(event)
+        assert result == 0.0
+
     def test_sorting_order(self):
         """Verify events sort correctly by timestamp."""
         events = [
@@ -214,3 +238,27 @@ class TestGetEventSortKey:
         ]
         sorted_events = sorted(events, key=_get_event_sort_key)
         assert [e["id"] for e in sorted_events] == ["earlier", "middle", "later"]
+
+
+class TestFormatExpiry:
+    """Tests for format_expiry function."""
+
+    def test_infinity_returns_indefinite(self):
+        assert format_expiry("infinity") == "indefinite"
+
+    def test_empty_string_returns_indefinite(self):
+        assert format_expiry("") == "indefinite"
+
+    def test_none_returns_indefinite(self):
+        assert format_expiry(None) == "indefinite"
+
+    def test_valid_expiry_format(self):
+        # YYYYMMDDHHMMSS format
+        assert format_expiry("20260227170300") == "17:03, 27 February 2026"
+
+    def test_expiry_single_digit_day(self):
+        assert format_expiry("20260103091500") == "09:15, 3 January 2026"
+
+    def test_malformed_expiry_returns_raw(self):
+        # Invalid format should return the raw value as fallback
+        assert format_expiry("not-a-date") == "not-a-date"
