@@ -1,1 +1,2 @@
 mwclient
+python-dotenv

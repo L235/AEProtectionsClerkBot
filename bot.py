@@ -61,6 +61,7 @@ from urllib.request import urlopen, Request
 from typing import Match
 import mwclient
 from mwclient.page import Page as MWPage
+from dotenv import load_dotenv
 
 from timestamp import (
     LAST_UPDATED_RE,
@@ -69,6 +70,9 @@ from timestamp import (
     iso8601_from_dt,
     to_mediawiki_timestamp,
 )
+
+# Load environment variables from .env file for local development
+load_dotenv()
 
 
 # --------- Enums ---------
