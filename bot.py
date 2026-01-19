@@ -51,7 +51,6 @@ import os
 import re
 import sys
 import time
-import unicodedata
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -69,6 +68,12 @@ from timestamp import (
     extract_last_updated,
     iso8601_from_dt,
     to_mediawiki_timestamp,
+    clean_invisible_unicode,
+    format_expiry,
+)
+from filters import (
+    AE_TRIGGERS,
+    is_arbitration_enforcement,
 )
 
 # Load environment variables from .env file for local development
@@ -130,24 +135,6 @@ if not USERNAME or not PASSWORD or not TARGET_PAGE:
 
 # --------- Constants ---------
 
-# AE trigger phrases (case-insensitive) to detect arbitration enforcement
-AE_TRIGGERS = [
-    "arbitration",
-    "arbcom",
-    "ctop",
-    "ct/",
-    "contentious topic",
-    "blpct",
-    "blpds",
-    "arbpia",
-    "wp:ae ", # bodge to remove "WP:AELECT"
-    "wikipedia:ae ",
-    "wp:ae|",
-    "wikipedia:ae|",
-    "wp:ae]",
-    "wikipedia:ae]",
-]
-
 # Template entry pattern to find existing logids and avoid duplicates on append
 ENTRY_LOGID_RE = re.compile(
     r"\{\{\s*User:ClerkBot/AE[ _]entry\s*\|[^}]*\blogid\s*=\s*(\d+)\b[^}]*\}\}",
@@ -164,43 +151,12 @@ def extract_existing_logids(text: str) -> set:
     return set(int(x) for x in ENTRY_LOGID_RE.findall(text))
 
 
-def is_arbitration_enforcement(comment: str) -> bool:
-    comment_lower = (comment or "").lower()
-    return any(trigger in comment_lower for trigger in AE_TRIGGERS)
-
-
 def mediawiki_param_nowiki(value: str) -> str:
     """
     Wrap a parameter value in <nowiki> to avoid template-breaking characters (|, }}, [[]], etc.).
     """
     value = value or ""
     return "<nowiki>" + value + "</nowiki>"
-
-
-def clean_invisible_unicode(text: str) -> str:
-    """Remove invisible Unicode characters that could cause display issues."""
-    if not text:
-        return text
-    
-    # Remove common problematic invisible Unicode characters
-    # LTR/RTL marks and other directional formatting characters
-    invisible_chars = [
-        '\u200E', '\u200F',  # LTR/RTL marks
-        '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',  # Directional formatting
-        '\u2066', '\u2067', '\u2068', '\u2069',  # Directional isolates
-        '\uFEFF',  # Zero Width No-Break Space (BOM)
-        '\u200B', '\u200C', '\u200D',  # Zero width characters
-    ]
-    
-    cleaned = text
-    for char in invisible_chars:
-        cleaned = cleaned.replace(char, '')
-    
-    # Also remove other control characters except newlines, tabs, and carriage returns
-    cleaned = ''.join(char for char in cleaned 
-                     if unicodedata.category(char)[0] != 'C' or char in '\n\t\r')
-    
-    return cleaned
 
 
 # --------- Topic detection ---------
@@ -378,25 +334,6 @@ def enumerate_stable_logevents(
         if action in ("reset", "move_stable"):
             continue  # skip removals and page move actions
         yield log_event
-
-
-def format_expiry(expiry: str) -> str:
-    """
-    Format a MediaWiki expiry string for human-readable display.
-
-    Args:
-        expiry: Expiry in YYYYMMDDHHMMSS format or "infinity"
-
-    Returns:
-        Human-readable string like "17:03, 27 February 2026" or "indefinite"
-    """
-    if not expiry or expiry == "infinity":
-        return "indefinite"
-    try:
-        dt = datetime.strptime(expiry, "%Y%m%d%H%M%S")
-        return dt.strftime("%H:%M, ") + str(dt.day) + dt.strftime(" %B %Y")
-    except ValueError:
-        return expiry  # fallback to raw value
 
 
 def build_action_string(log_event: dict) -> str:

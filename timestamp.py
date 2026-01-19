@@ -1,13 +1,15 @@
 """
-Timestamp utilities for MediaWiki signature format handling.
+Timestamp and utility functions for MediaWiki bot operations.
 
 Provides functions to parse, format, and convert timestamps between Python
-datetime objects and MediaWiki's signature timestamp format.
+datetime objects and MediaWiki's signature timestamp format, as well as
+general text processing utilities.
 """
 
 import re
 import time
 import calendar
+import unicodedata
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -80,6 +82,51 @@ def to_mediawiki_timestamp(timestamp_value) -> str:
     return to_mediawiki_sig_timestamp(datetime_obj)
 
 
+def clean_invisible_unicode(text: str) -> str:
+    """Remove invisible Unicode characters that could cause display issues."""
+    if not text:
+        return text
+
+    # Remove common problematic invisible Unicode characters
+    # LTR/RTL marks and other directional formatting characters
+    invisible_chars = [
+        '\u200E', '\u200F',  # LTR/RTL marks
+        '\u202A', '\u202B', '\u202C', '\u202D', '\u202E',  # Directional formatting
+        '\u2066', '\u2067', '\u2068', '\u2069',  # Directional isolates
+        '\uFEFF',  # Zero Width No-Break Space (BOM)
+        '\u200B', '\u200C', '\u200D',  # Zero width characters
+    ]
+
+    cleaned = text
+    for char in invisible_chars:
+        cleaned = cleaned.replace(char, '')
+
+    # Also remove other control characters except newlines, tabs, and carriage returns
+    cleaned = ''.join(char for char in cleaned
+                     if unicodedata.category(char)[0] != 'C' or char in '\n\t\r')
+
+    return cleaned
+
+
+def format_expiry(expiry: str) -> str:
+    """
+    Format a MediaWiki expiry string for human-readable display.
+
+    Args:
+        expiry: Expiry in YYYYMMDDHHMMSS format or "infinity"
+
+    Returns:
+        Human-readable string like "17:03, 27 February 2026" or "indefinite"
+    """
+    if not expiry or expiry == "infinity":
+        return "indefinite"
+    try:
+        dt = datetime.strptime(expiry, "%Y%m%d%H%M%S")
+        return dt.strftime("%H:%M, ") + str(dt.day) + dt.strftime(" %B %Y")
+    except ValueError:
+        return expiry  # fallback to raw value
+
+
 __all__ = [
     'LAST_UPDATED_RE',
     'parse_mediawiki_sig_timestamp',
@@ -87,4 +134,6 @@ __all__ = [
     'extract_last_updated',
     'iso8601_from_dt',
     'to_mediawiki_timestamp',
+    'clean_invisible_unicode',
+    'format_expiry',
 ]

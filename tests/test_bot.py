@@ -8,17 +8,19 @@ import pytest
 
 # Import the functions we want to test
 from bot import (
-    is_arbitration_enforcement,
     build_action_string,
-    format_expiry,
     extract_existing_logids,
     _get_event_sort_key,
     TopicDetector,
+)
+from filters import (
+    is_arbitration_enforcement,
 )
 from timestamp import (
     parse_mediawiki_sig_timestamp,
     to_mediawiki_sig_timestamp,
     extract_last_updated,
+    format_expiry,
 )
 
 
