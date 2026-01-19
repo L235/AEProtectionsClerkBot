@@ -267,6 +267,112 @@ class TestFormatExpiry:
         assert format_expiry("not-a-date") == "not-a-date"
 
 
+class TestMediawikiParamNowiki:
+    """Tests for nowiki wrapping utility."""
+
+    def test_wraps_value(self):
+        from bot import mediawiki_param_nowiki
+        assert mediawiki_param_nowiki("test") == "<nowiki>test</nowiki>"
+
+    def test_handles_empty_string(self):
+        from bot import mediawiki_param_nowiki
+        assert mediawiki_param_nowiki("") == "<nowiki></nowiki>"
+
+    def test_handles_none(self):
+        from bot import mediawiki_param_nowiki
+        assert mediawiki_param_nowiki(None) == "<nowiki></nowiki>"
+
+    def test_wraps_special_characters(self):
+        from bot import mediawiki_param_nowiki
+        assert mediawiki_param_nowiki("foo|bar}}[[link]]") == "<nowiki>foo|bar}}[[link]]</nowiki>"
+
+
+class TestFormatEntry:
+    """Tests for log entry formatting."""
+
+    def test_basic_entry_format(self):
+        from bot import format_entry
+        log_event = {
+            "logid": 12345,
+            "user": "Admin",
+            "title": "Test Page",
+            "timestamp": "2025-08-19T19:32:00Z",
+            "comment": "Test protection",
+            "type": "protect",
+            "action": "protect",
+            "params": {"description": "edit=autoconfirmed"}
+        }
+        result = format_entry(log_event, "ap")
+        assert "{{User:ClerkBot/AE entry" in result
+        assert "|logid=12345" in result
+        assert "|admin=Admin" in result
+        assert "|page=Test Page" in result
+        assert "|topic=ap" in result
+        assert "}}" in result
+
+    def test_entry_with_empty_topic(self):
+        from bot import format_entry
+        log_event = {
+            "logid": 12345,
+            "user": "Admin",
+            "title": "Test Page",
+            "timestamp": "2025-08-19T19:32:00Z",
+            "comment": "Test protection",
+            "type": "protect",
+            "action": "protect",
+            "params": {"description": "edit=autoconfirmed"}
+        }
+        result = format_entry(log_event, "")
+        assert "|topic=" in result
+        # Should have empty topic parameter
+
+    def test_entry_with_pending_changes(self):
+        from bot import format_entry
+        log_event = {
+            "logid": 67890,
+            "user": "AdminTwo",
+            "title": "Another Page",
+            "timestamp": "2025-08-20T10:00:00Z",
+            "comment": "PC protection",
+            "type": "stable",
+            "action": "config",
+            "params": {"autoreview": "autoconfirmed"}
+        }
+        result = format_entry(log_event, "blp")
+        assert "|logid=67890" in result
+        assert "|admin=AdminTwo" in result
+        assert "|topic=blp" in result
+
+
+class TestBuildNotificationText:
+    """Tests for admin notification message building."""
+
+    def test_single_item_notification(self):
+        from bot import _build_notification_text
+        items = [(12345, "19:32, 19 August 2025", "Test Page")]
+        result = _build_notification_text("Admin", items, "User:ClerkBot/Test")
+        assert "{{subst:User:ClerkBot/AE notification template" in result
+        assert "|admin=Admin" in result
+        assert "|target_page=User:ClerkBot/Test" in result
+        assert "[[Special:Redirect/logid/12345|19:32, 19 August 2025]]" in result
+        assert "([[Test Page]])" in result
+        assert "}}" in result
+
+    def test_multiple_items_notification(self):
+        from bot import _build_notification_text
+        items = [
+            (12345, "19:32, 19 August 2025", "Page One"),
+            (67890, "20:15, 20 August 2025", "Page Two"),
+        ]
+        result = _build_notification_text("AdminUser", items, "User:ClerkBot/Log")
+        assert "[[Special:Redirect/logid/12345" in result
+        assert "[[Special:Redirect/logid/67890" in result
+        assert "([[Page One]])" in result
+        assert "([[Page Two]])" in result
+        # Should have multiple bullet points
+        assert result.count("* [[Special:Redirect/logid/") == 2
+
+
 class TestTopicDetector:
     """Tests for TopicDetector heuristics."""
 
