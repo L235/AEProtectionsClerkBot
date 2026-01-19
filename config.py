@@ -112,10 +112,7 @@ class BotConfig:
             "CLERKBOT_CONFIG_URL",
             "https://en.wikipedia.org/w/index.php?title=User:ClerkBot/T3/config.json&action=raw&ctype=application/json"
         )
-        dryrun_page = os.environ.get(
-            "CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE",
-            f"{target_page}/notifications_dryrun"
-        )
+        dryrun_page = os.environ.get("CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE", "")
         log_level = os.environ.get("CLERKBOT_LOG_LEVEL", "INFO").upper()
 
         return cls(

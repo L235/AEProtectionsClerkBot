@@ -44,6 +44,7 @@ The target page must begin with a line like:
   Last updated: 19:32, 19 August 2025 (UTC)
 """
 
+# Standard library imports
 import calendar
 import json
 import logging
@@ -52,31 +53,34 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple, Set
-from urllib.request import urlopen, Request
+from typing import Dict, Iterable, List, Match, Optional, Set, Tuple
+from urllib.request import Request, urlopen
 
-from typing import Match
+# Third-party imports
 import mwclient
 from mwclient.page import Page as MWPage
-from dotenv import load_dotenv
 
+# Local imports
 from config import BotConfig, NotifyMode
+from filters import AE_TRIGGERS, is_arbitration_enforcement
 from timestamp import (
     LAST_UPDATED_RE,
-    to_mediawiki_sig_timestamp,
-    extract_last_updated,
-    iso8601_from_dt,
-    to_mediawiki_timestamp,
     clean_invisible_unicode,
+    extract_last_updated,
     format_expiry,
-)
-from filters import (
-    AE_TRIGGERS,
-    is_arbitration_enforcement,
+    iso8601_from_dt,
+    to_mediawiki_sig_timestamp,
+    to_mediawiki_timestamp,
 )
 
 # Load environment variables from .env file for local development
-load_dotenv()
+# This is optional and only needed for local development with .env files
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # python-dotenv not installed, skip loading .env file
+    pass
 
 # Load configuration from environment
 config = BotConfig.from_environment()
@@ -106,7 +110,7 @@ def extract_existing_logids(text: str) -> set:
     return set(int(x) for x in ENTRY_LOGID_RE.findall(text))
 
 
-def mediawiki_param_nowiki(value: str) -> str:
+def mediawiki_param_nowiki(value: Optional[str]) -> str:
     """
     Wrap a parameter value in <nowiki> to avoid template-breaking characters (|, }}, [[]], etc.).
     """
@@ -754,7 +758,12 @@ def main() -> int:
         return 0
 
     # Save the updated page
-    _save_page_update(site, config.target_page, new_text, new_entries, base_revid)
+    try:
+        _save_page_update(site, config.target_page, new_text, new_entries, base_revid)
+    except mwclient.errors.EditError as e:
+        log.error("Failed to save page due to edit conflict or error: %s", e)
+        log.error("Another user may have edited the page. Please re-run the bot.")
+        return 1
 
     # Run notify-admin module after attempting the main page save
     # Only notify for actions that were newly appended in this run

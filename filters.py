@@ -15,7 +15,7 @@ AE_TRIGGERS = [
     "blpct",
     "blpds",
     "arbpia",
-    "wp:ae ",  # bodge to remove "WP:AELECT"
+    "wp:ae ",  # Trailing space to avoid matching "WP:AELECT"
     "wikipedia:ae ",
     "wp:ae|",
     "wikipedia:ae|",
