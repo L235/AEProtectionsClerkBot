@@ -47,12 +47,10 @@ The target page must begin with a line like:
 import calendar
 import json
 import logging
-import os
 import re
 import sys
 import time
 from datetime import datetime, timezone
-from enum import Enum
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple, Set
 from urllib.request import urlopen, Request
@@ -62,6 +60,7 @@ import mwclient
 from mwclient.page import Page as MWPage
 from dotenv import load_dotenv
 
+from config import BotConfig, NotifyMode
 from timestamp import (
     LAST_UPDATED_RE,
     to_mediawiki_sig_timestamp,
@@ -79,59 +78,15 @@ from filters import (
 # Load environment variables from .env file for local development
 load_dotenv()
 
-
-# --------- Enums ---------
-class NotifyMode(str, Enum):
-    """Notification mode for the notify-admin module."""
-    DISABLED = "false"
-    DEBUG = "debug"
-    ENABLED = "true"
-
+# Load configuration from environment
+config = BotConfig.from_environment()
 
 # --------- Logging ---------
-LOG_LEVEL = os.environ.get("CLERKBOT_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=LOG_LEVEL,
+    level=config.log_level,
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger(__name__)
-
-# --------- Configuration ---------
-
-# Required authentication and target page
-USERNAME = os.environ.get("CLERKBOT_USERNAME")
-PASSWORD = os.environ.get("CLERKBOT_PASSWORD")
-TARGET_PAGE = os.environ.get("CLERKBOT_TARGET_PAGE")
-
-# Optional API and user agent configuration
-API_HOST = os.environ.get("CLERKBOT_API_HOST", "en.wikipedia.org")
-API_PATH = os.environ.get("CLERKBOT_API_PATH", "/w/")
-USER_AGENT = os.environ.get(
-    "CLERKBOT_USER_AGENT",
-    "ClerkBot-AEProtections/1.0 (https://en.wikipedia.org/wiki/User:ClerkBot)",
-)
-
-# Topic detection configuration
-CONFIG_URL = os.environ.get(
-    "CLERKBOT_CONFIG_URL",
-    "https://en.wikipedia.org/w/index.php?title=User:ClerkBot/T3/config.json&action=raw&ctype=application/json"
-)
-
-# Notify-admin module configuration
-# Validate the environment variable and default to DEBUG mode for safety
-# This prevents accidental production notifications during development/testing
-notify_raw = (os.environ.get("CLERKBOT_NOTIFY_ADMINS") or "").strip().lower()
-if notify_raw not in (NotifyMode.DISABLED.value, NotifyMode.DEBUG.value, NotifyMode.ENABLED.value):
-    notify_raw = NotifyMode.DEBUG.value
-NOTIFY_MODE = NotifyMode(notify_raw)
-
-DRYRUN_PAGE = os.environ.get("CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE", f"{TARGET_PAGE}/notifications_dryrun")
-
-# Validate required configuration
-if not USERNAME or not PASSWORD or not TARGET_PAGE:
-    log.error("Missing required environment variables. "
-              "Set CLERKBOT_USERNAME, CLERKBOT_PASSWORD, CLERKBOT_TARGET_PAGE.")
-    sys.exit(2)
 
 # --------- Constants ---------
 
@@ -241,16 +196,17 @@ class TopicDetector:
         return ""
 
 
-def load_topics(url: str) -> TopicDetector:
+def load_topics(url: str, user_agent: str) -> TopicDetector:
     """
     Load topic detection configuration from a URL.
     Args:
         url: URL to fetch the JSON configuration from
+        user_agent: User-Agent header for the request
     Returns:
         TopicDetector instance configured with the fetched data
     """
     log.info("Fetching topics configuration from %s", url)
-    request = Request(url, headers={'User-Agent': USER_AGENT})
+    request = Request(url, headers={'User-Agent': user_agent})
     with urlopen(request) as response:
         data = json.loads(response.read().decode("utf-8"))
     codes = data.get("codes", [])
@@ -264,14 +220,23 @@ def load_topics(url: str) -> TopicDetector:
 
 # --------- Core logic ---------
 
-def connect_site() -> mwclient.Site:
+def connect_site(config: BotConfig) -> mwclient.Site:
+    """
+    Connect to MediaWiki site and authenticate.
+
+    Args:
+        config: Bot configuration
+
+    Returns:
+        Authenticated mwclient Site instance
+    """
     site = mwclient.Site(
-        API_HOST,
+        config.api_host,
         scheme="https",
-        path=API_PATH,
-        clients_useragent=USER_AGENT,
+        path=config.api_path,
+        clients_useragent=config.user_agent,
     )
-    site.login(USERNAME, PASSWORD)
+    site.login(config.username, config.password)
     return site
 
 
@@ -430,7 +395,7 @@ def format_entry(log_event: dict, topic_code: str) -> str:
 
 
 # --------- Notify admin module ---------
-def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> str:
+def _build_notification_text(admin: str, items: List[Tuple[int, str, str]], target_page: str) -> str:
     """
     Build a wikitext notification message for an admin about unclassified protection actions.
 
@@ -441,6 +406,7 @@ def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> s
         admin: The username of the admin to notify
         items: List of (logid, utc_date_sig, protection_page_title) tuples for each
                unclassified action performed by this admin
+        target_page: The target page URL to include in notification
 
     Returns:
         A formatted wikitext notification ready to post to the admin's talk page
@@ -451,7 +417,7 @@ def _build_notification_text(admin: str, items: List[Tuple[int, str, str]]) -> s
     )
 
     message = ("{{subst:User:ClerkBot/AE notification template"
-        f"|admin={admin}|actions={bullets}|target_page={TARGET_PAGE}"
+        f"|admin={admin}|actions={bullets}|target_page={target_page}"
         "}}"
     )
     return message
@@ -496,6 +462,7 @@ def _notify_admins(
     unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]],
     token: str,
     bot_usernames: Set[str],
+    config: BotConfig,
 ) -> None:
     """
     Notify admins about protection actions that could not be automatically categorized.
@@ -504,9 +471,9 @@ def _notify_admins(
     to their talk page (or to a debug page) asking them to review the categorization.
     Bot accounts are automatically excluded from notifications.
 
-    Behavior depends on NOTIFY_MODE:
+    Behavior depends on config.notify_mode:
       - DISABLED: No notifications sent, returns immediately
-      - DEBUG: All notifications appended to DRYRUN_PAGE for testing
+      - DEBUG: All notifications appended to config.dryrun_page for testing
       - ENABLED: Notifications posted to individual admin talk pages
 
     Args:
@@ -515,11 +482,12 @@ def _notify_admins(
                                for actions that were newly logged but lack a topic code
         token: CSRF token for API edits
         bot_usernames: Set of usernames with bot rights (excluded from notifications)
+        config: Bot configuration
 
     Returns:
         None
     """
-    if NOTIFY_MODE == NotifyMode.DISABLED:
+    if config.notify_mode == NotifyMode.DISABLED:
         log.info("Notify-admin module disabled (CLERKBOT_NOTIFY_ADMINS=false).")
         return
     if not unclassified_by_admin:
@@ -532,9 +500,9 @@ def _notify_admins(
         if admin in bot_usernames:
             log.debug("Notify-admin: skipping bot account %s", admin)
             continue
-        text = _build_notification_text(admin, items)
-        if NOTIFY_MODE == NotifyMode.DEBUG:
-            dest_title = DRYRUN_PAGE
+        text = _build_notification_text(admin, items, config.target_page)
+        if config.notify_mode == NotifyMode.DEBUG:
+            dest_title = config.dryrun_page
             summary = f"DEBUG: AE protection categorization notice for {admin}"
         else:
             dest_title = f"User talk:{admin}"
@@ -697,12 +665,13 @@ def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
     return new_text
 
 
-def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str], base_revid: int) -> None:
+def _save_page_update(site: mwclient.Site, target_page: str, new_text: str, new_entries: List[str], base_revid: int) -> None:
     """
     Save the updated page text to Wikipedia with edit conflict detection.
 
     Args:
         site: The mwclient Site connection
+        target_page: Title of the page to save
         new_text: The complete new page text to save
         new_entries: List of new entries (used for edit summary)
         base_revid: The revision ID that the edit is based on (for conflict detection)
@@ -720,12 +689,12 @@ def _save_page_update(site: mwclient.Site, new_text: str, new_entries: List[str]
     )
 
     token = site.get_token('csrf')
-    log.info("Saving single edit to %s (%s) [baserevid=%d]", TARGET_PAGE, edit_summary, base_revid)
+    log.info("Saving single edit to %s (%s) [baserevid=%d]", target_page, edit_summary, base_revid)
 
     try:
         res = site.api(
             'edit',
-            title=TARGET_PAGE,
+            title=target_page,
             text=new_text,
             summary=edit_summary,
             bot=True,
@@ -747,24 +716,24 @@ def main() -> int:
     """
     # Load topic detection data
     try:
-        detector = load_topics(CONFIG_URL)
+        detector = load_topics(config.config_url, config.user_agent)
     except Exception as error:
-        log.error("Failed to load CTOP topics configuration from '%s': %s", CONFIG_URL, error)
+        log.error("Failed to load CTOP topics configuration from '%s': %s", config.config_url, error)
         return 2
 
     # Connect to Wikipedia and load the target page
-    site = connect_site()
+    site = connect_site(config)
     bot_usernames = fetch_bot_usernames(site)
-    page, base_revid = fetch_target_page(site, TARGET_PAGE)
+    page, base_revid = fetch_target_page(site, config.target_page)
     if not page.exists:
-        log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", TARGET_PAGE)
+        log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", config.target_page)
         return 2
 
     # Parse existing page content
     text = page.text()
     last_updated_dt = extract_last_updated(text)
     if not last_updated_dt:
-        log.error("Could not find 'Last updated: ... (UTC)' line at top of '%s'", TARGET_PAGE)
+        log.error("Could not find 'Last updated: ... (UTC)' line at top of '%s'", config.target_page)
         return 2
 
     existing_logids = extract_existing_logids(text)
@@ -785,13 +754,13 @@ def main() -> int:
         return 0
 
     # Save the updated page
-    _save_page_update(site, new_text, new_entries, base_revid)
+    _save_page_update(site, config.target_page, new_text, new_entries, base_revid)
 
     # Run notify-admin module after attempting the main page save
     # Only notify for actions that were newly appended in this run
     if new_entries and unclassified_by_admin:
         token = site.get_token('csrf')
-        _notify_admins(site, unclassified_by_admin, token, bot_usernames)
+        _notify_admins(site, unclassified_by_admin, token, bot_usernames, config)
     else:
         log.info("Notify-admin module: nothing to notify.")
 
