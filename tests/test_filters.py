@@ -2,7 +2,7 @@
 
 import pytest
 
-from filters import AE_TRIGGERS, is_arbitration_enforcement
+from clerkbot.filters import AE_TRIGGERS, is_arbitration_enforcement
 
 
 class TestAETriggers:

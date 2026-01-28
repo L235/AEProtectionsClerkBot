@@ -46,32 +46,30 @@ The target page must begin with a line like:
 
 # Standard library imports
 import calendar
-import json
 import logging
-import re
 import sys
 import time
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Dict, Iterable, List, Match, Optional, Set, Tuple
-from urllib.request import Request, urlopen
+from typing import Dict, Iterable, List, Set, Tuple
 
 # Third-party imports
 import mwclient
 from mwclient.page import Page as MWPage
 
 # Local imports
-from config import BotConfig, NotifyMode
-from filters import AE_TRIGGERS, is_arbitration_enforcement
-from timestamp import (
+from clerkbot.config import BotConfig, NotifyMode
+from clerkbot.constants import ENTRY_LOGID_RE, FOOTER_MARK
+from clerkbot.entries import format_entry
+from clerkbot.filters import is_arbitration_enforcement
+from clerkbot.timestamp import (
     LAST_UPDATED_RE,
     clean_invisible_unicode,
     extract_last_updated,
-    format_expiry,
     iso8601_from_dt,
     to_mediawiki_sig_timestamp,
     to_mediawiki_timestamp,
 )
+from clerkbot.topics import TopicDetector, load_topics
 
 # Load environment variables from .env file for local development
 # This is optional and only needed for local development with .env files
@@ -92,135 +90,11 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# --------- Constants ---------
-
-# Template entry pattern to find existing logids and avoid duplicates on append
-ENTRY_LOGID_RE = re.compile(
-    r"\{\{\s*User:ClerkBot/AE[ _]entry\s*\|[^}]*\blogid\s*=\s*(\d+)\b[^}]*\}\}",
-    re.DOTALL | re.IGNORECASE,
-)
-# Lightweight presence checks for header/footer markers
-HEADER_MARK = "{{/header}}"
-FOOTER_MARK = "{{/footer}}"
-
-
 # --------- Utilities ---------
 
 def extract_existing_logids(text: str) -> set:
     return set(int(x) for x in ENTRY_LOGID_RE.findall(text))
 
-
-def mediawiki_param_nowiki(value: Optional[str]) -> str:
-    """
-    Wrap a parameter value in <nowiki> to avoid template-breaking characters (|, }}, [[]], etc.).
-    """
-    value = value or ""
-    return "<nowiki>" + value + "</nowiki>"
-
-
-# --------- Topic detection ---------
-
-class TopicDetector:
-    """
-    Detects CTOP topic codes from edit summaries using the required heuristics, in order:
-
-    (1) If a topic code appears in the comment, not surrounded by letters (case-insensitive), return that code.
-    (2) If a WP:CT/$CODE shortcut appears, return $CODE.
-    (3) If a CTOP specific page appears, return the corresponding code.
-    (4) If an override string appears, return the corresponding code.
-
-    Args:
-        codes: List of valid topic codes (e.g., ["ap", "blp", "cc"]). These are searched
-               as bare tokens in edit summaries.
-        page_to_code: Dictionary mapping full page names to topic codes (e.g.,
-                      "Wikipedia:Contentious topics/American politics" -> "ap").
-                      Used to detect topic codes from page references in edit summaries.
-        override_strings: Dictionary mapping special/legacy strings to topic codes (e.g.,
-                          "arbind" -> "sa"). Handles non-standard references that don't
-                          match standard patterns.
-    """
-
-    def __init__(self, codes: List[str], page_to_code: Dict[str, str], override_strings: Dict[str, str]):
-        self.codes = sorted([c.lower() for c in codes], key=len, reverse=True)
-        # Normalize specific pages for case-insensitive match and common dash variants
-        def _norm(s: str) -> str:
-            return (
-                (s or "")
-                .lower()
-                .replace("\u2013", "-")  # en dash
-                .replace("\u2014", "-")  # em dash
-                .replace("\u2010", "-")  # hyphen
-                .replace("\u2212", "-")  # minus sign
-            )
-        self._norm = _norm
-        # Input mapping is now page -> code; store normalized page text -> code
-        self.page_to_code = { _norm(page): (code or "").lower() for page, code in page_to_code.items() }
-        # Precompile regexes for code token matches
-        self._code_res = {
-            code: re.compile(r"(?i)(?<![A-Za-z])" + re.escape(code) + r"(?![A-Za-z])")
-            for code in self.codes
-        }
-        # Regex to catch WP:CT/<code>, WP:CTOP/<code>, Wikipedia:CT/<code>, Wikipedia:CTOP/<code>
-        self._ctop_shortcut_re = re.compile(r"(?i)(?:wp|wikipedia):ct(?:op)?/([A-Za-z-]+)")
-        self.override_strings = override_strings
-
-    def detect(self, comment: str) -> str:
-        comment = (comment or "")
-        lower = self._norm(comment)
-
-        # Heuristic (1): WP:CT/<code> (or WP:CTOP/<code>) shortcuts (e.g., "WP:CT/AP", "WP:CTOP/AP", "Wikipedia:CTOP/AP")
-        # These are Wikipedia shortcuts commonly used in edit summaries
-        match = self._ctop_shortcut_re.search(lower)
-        if match:
-            code = match.group(1).lower()
-            if code in self.codes:
-                return code
-
-        # Heuristic (2): specific page string appears anywhere in comment
-        # Detects full page names like "Wikipedia:Contentious topics/American politics"
-        # These may appear as links or plain text in edit summaries
-        for page_norm, code in self.page_to_code.items():
-            if page_norm in lower:
-                return code
-
-        # Heuristic (3): override strings for special cases and legacy abbreviations
-        # Handles historical or non-standard references (e.g., "arbind" -> "sa")
-        for override, code in self.override_strings.items():
-            if override in lower:
-                return code
-
-        # Heuristic (4): bare code token (e.g., "AE action: BLP")
-        # Matches topic codes when they appear as standalone words, not embedded in longer words
-        for code in self.codes:
-            if self._code_res[code].search(lower):
-                if code not in ("at", ): # temporary fix for "at"
-                    return code
-
-        # No topic detected - return empty string
-        return ""
-
-
-def load_topics(url: str, user_agent: str) -> TopicDetector:
-    """
-    Load topic detection configuration from a URL.
-    Args:
-        url: URL to fetch the JSON configuration from
-        user_agent: User-Agent header for the request
-    Returns:
-        TopicDetector instance configured with the fetched data
-    """
-    log.info("Fetching topics configuration from %s", url)
-    request = Request(url, headers={'User-Agent': user_agent})
-    with urlopen(request) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    codes = data.get("codes", [])
-    # JSON now provides mapping: page -> code
-    page_to_code = data.get("specific_pages", {})
-    override_strings = data.get("override_strings", {})
-    if not codes or not page_to_code:
-        raise ValueError("Configuration JSON missing required keys 'codes' or 'specific_pages'")
-    return TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
-  
 
 # --------- Core logic ---------
 
@@ -303,99 +177,6 @@ def enumerate_stable_logevents(
         if action in ("reset", "move_stable"):
             continue  # skip removals and page move actions
         yield log_event
-
-
-def build_action_string(log_event: dict) -> str:
-    """
-    Build a human-readable action string from a protection log event.
-
-    ACTION is constructed as:
-      - if type == 'stable' and action == 'config': "added pending changes protection (<details>)"
-      - if type == 'stable' and action == 'modify': "changed pending changes level (<details>)"
-      - if action == 'protect': "added protection (<description>)"
-      - if action == 'modify':  "changed protection level (<description>)"
-      - otherwise: use the raw action string.
-
-    Args:
-        log_event: A protection log event dict from the MediaWiki API
-
-    Returns:
-        A formatted action string describing what protection was applied
-    """
-    action = log_event.get("action", "")
-    log_type = log_event.get("type", "")
-    params = log_event.get("params") or {}
-
-    # Handle pending changes (stable) log events
-    if log_type == "stable" and action in ("config", "modify"):
-        autoreview = params.get("autoreview") or ""
-        expiry = params.get("expiry") or ""
-        base = "added pending changes protection" if action == "config" else "changed pending changes level"
-
-        details = []
-        if autoreview:
-            details.append(f"autoreview={autoreview}")
-        if expiry:
-            details.append(f"expires {format_expiry(expiry)}")
-
-        if details:
-            return f"{base} ({', '.join(details)})"
-        return base
-
-    # Handle regular protection log events
-    desc = params.get("description") or ""
-    if action == "protect":
-        base = "added protection"
-    elif action == "modify":
-        base = "changed protection level"
-    else:
-        return action or ""
-    if desc:
-        return f"{base} ({desc})"
-    return base
-
-
-def format_entry(log_event: dict, topic_code: str) -> str:
-    """
-    Render a protection log event as a template invocation string.
-
-    Generates wikitext in the format:
-    {{User:ClerkBot/AE entry|logid=...|admin=...|page=...|date=...|action=...|summary=...|topic=...}}
-
-    Args:
-        log_event: A protection log event dict from the MediaWiki API
-        topic_code: The detected CTOP topic code, or empty string if none detected
-
-    Returns:
-        A formatted template invocation string ready to append to the target page
-    """
-    logid = log_event.get("logid")
-    user = log_event.get("user") or ""
-    title = log_event.get("title") or ""
-    timestamp_value = log_event.get("timestamp")
-    comment = log_event.get("comment") or ""
-
-    date_str = to_mediawiki_timestamp(timestamp_value)
-    action_str = build_action_string(log_event)
-
-    # Parameters are used directly in template format without nowiki wrapping
-    action_param = action_str
-    summary_param = comment
-
-    # topic may be empty string
-    topic_part = topic_code
-
-    return (
-        "{{User:ClerkBot/AE entry"
-        f"|logid={logid}"
-        f"|admin={user}"
-        f"|page={title}"
-        f"|date={date_str}"
-        f"|action={action_param}"
-        f"|summary={summary_param}"
-        f"|topic={topic_part}"
-        "}}"
-    )
 
 
 # --------- Notify admin module ---------
