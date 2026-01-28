@@ -19,10 +19,10 @@ class TopicDetector:
     """
     Detects CTOP topic codes from edit summaries using the required heuristics, in order:
 
-    (1) If a topic code appears in the comment, not surrounded by letters (case-insensitive), return that code.
-    (2) If a WP:CT/$CODE shortcut appears, return $CODE.
-    (3) If a CTOP specific page appears, return the corresponding code.
-    (4) If an override string appears, return the corresponding code.
+    (1) If a WP:CT/$CODE shortcut appears, return $CODE.
+    (2) If a CTOP specific page appears, return the corresponding code.
+    (3) If an override string appears, return the corresponding code.
+    (4) If a bare topic code appears in the comment, not surrounded by letters (case-insensitive), return that code.
 
     Args:
         codes: List of valid topic codes (e.g., ["ap", "blp", "cc"]). These are searched

@@ -2,7 +2,7 @@
 
 import pytest
 
-from topics import TopicDetector
+from clerkbot.topics import TopicDetector
 
 
 class TestTopicDetector:

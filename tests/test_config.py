@@ -4,7 +4,7 @@ import os
 import pytest
 from unittest.mock import patch
 
-from config import BotConfig, NotifyMode
+from clerkbot.config import BotConfig, NotifyMode
 
 
 class TestNotifyMode:

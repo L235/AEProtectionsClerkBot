@@ -57,11 +57,11 @@ import mwclient
 from mwclient.page import Page as MWPage
 
 # Local imports
-from config import BotConfig, NotifyMode
-from constants import ENTRY_LOGID_RE, FOOTER_MARK
-from entries import build_action_string, format_entry
-from filters import is_arbitration_enforcement
-from timestamp import (
+from clerkbot.config import BotConfig, NotifyMode
+from clerkbot.constants import ENTRY_LOGID_RE, FOOTER_MARK
+from clerkbot.entries import build_action_string, format_entry
+from clerkbot.filters import is_arbitration_enforcement
+from clerkbot.timestamp import (
     LAST_UPDATED_RE,
     clean_invisible_unicode,
     extract_last_updated,
@@ -69,7 +69,7 @@ from timestamp import (
     to_mediawiki_sig_timestamp,
     to_mediawiki_timestamp,
 )
-from topics import TopicDetector, load_topics
+from clerkbot.topics import TopicDetector, load_topics
 
 # Load environment variables from .env file for local development
 # This is optional and only needed for local development with .env files

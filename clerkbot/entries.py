@@ -4,8 +4,8 @@ Entry formatting for AE protection log entries.
 Provides functions to format protection log events as wikitext template invocations.
 """
 
-from constants import AE_ENTRY_TEMPLATE
-from timestamp import format_expiry, to_mediawiki_timestamp
+from clerkbot.constants import AE_ENTRY_TEMPLATE
+from clerkbot.timestamp import format_expiry, to_mediawiki_timestamp
 
 
 def build_action_string(log_event: dict) -> str:

@@ -11,9 +11,9 @@ from bot import (
     extract_existing_logids,
     _get_event_sort_key,
 )
-from entries import build_action_string
-from filters import is_arbitration_enforcement
-from timestamp import (
+from clerkbot.entries import build_action_string
+from clerkbot.filters import is_arbitration_enforcement
+from clerkbot.timestamp import (
     parse_mediawiki_sig_timestamp,
     to_mediawiki_sig_timestamp,
     extract_last_updated,
@@ -268,7 +268,7 @@ class TestFormatEntry:
     """Tests for log entry formatting."""
 
     def test_basic_entry_format(self):
-        from entries import format_entry
+        from clerkbot.entries import format_entry
         log_event = {
             "logid": 12345,
             "user": "Admin",
@@ -288,7 +288,7 @@ class TestFormatEntry:
         assert "}}" in result
 
     def test_entry_with_empty_topic(self):
-        from entries import format_entry
+        from clerkbot.entries import format_entry
         log_event = {
             "logid": 12345,
             "user": "Admin",
@@ -304,7 +304,7 @@ class TestFormatEntry:
         # Should have empty topic parameter
 
     def test_entry_with_pending_changes(self):
-        from entries import format_entry
+        from clerkbot.entries import format_entry
         log_event = {
             "logid": 67890,
             "user": "AdminTwo",

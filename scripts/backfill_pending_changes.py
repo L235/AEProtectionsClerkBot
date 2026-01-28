@@ -8,14 +8,16 @@ that were missed because the main bot only monitored type=protect events.
 Output goes to: User:ClerkBot/T3/pending_changes_2025
 
 Usage:
-    ./venv/bin/python backfill_pending_changes.py
+    ./venv/bin/python scripts/backfill_pending_changes.py
 
 Requires .env file with CLERKBOT_USERNAME and CLERKBOT_PASSWORD.
 """
 
+import calendar
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -23,7 +25,7 @@ from typing import Iterable
 import mwclient
 
 # Load .env file manually (to avoid requiring python-dotenv for this script)
-env_path = Path(__file__).parent / ".env"
+env_path = Path(__file__).parent.parent / ".env"
 if env_path.exists():
     for line in env_path.read_text().splitlines():
         line = line.strip()
@@ -33,11 +35,11 @@ if env_path.exists():
             os.environ.setdefault(key.strip(), value)
 
 # Import from shared modules
-from constants import FOOTER_MARK, HEADER_MARK
-from entries import format_entry
-from filters import is_arbitration_enforcement
-from timestamp import iso8601_from_dt, to_mediawiki_sig_timestamp
-from topics import load_topics
+from clerkbot.constants import FOOTER_MARK, HEADER_MARK
+from clerkbot.entries import format_entry
+from clerkbot.filters import is_arbitration_enforcement
+from clerkbot.timestamp import iso8601_from_dt, to_mediawiki_sig_timestamp
+from clerkbot.topics import load_topics
 
 # Configuration
 USERNAME = os.environ.get("CLERKBOT_USERNAME")
@@ -79,9 +81,6 @@ def enumerate_stable_logevents(site: mwclient.Site, start_utc: datetime) -> Iter
 
 def get_event_sort_key(log_event: dict) -> float:
     """Extract a sortable timestamp from a log event."""
-    import calendar
-    import time
-
     timestamp_value = log_event.get("timestamp")
     if isinstance(timestamp_value, time.struct_time):
         return calendar.timegm(timestamp_value)

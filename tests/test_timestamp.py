@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from timestamp import (
+from clerkbot.timestamp import (
     clean_invisible_unicode,
     format_expiry,
     parse_mediawiki_sig_timestamp,
