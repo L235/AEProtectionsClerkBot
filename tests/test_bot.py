@@ -8,13 +8,11 @@ import pytest
 
 # Import the functions we want to test
 from bot import (
-    build_action_string,
     extract_existing_logids,
     _get_event_sort_key,
 )
-from filters import (
-    is_arbitration_enforcement,
-)
+from entries import build_action_string
+from filters import is_arbitration_enforcement
 from timestamp import (
     parse_mediawiki_sig_timestamp,
     to_mediawiki_sig_timestamp,
@@ -266,31 +264,11 @@ class TestFormatExpiry:
         assert format_expiry("not-a-date") == "not-a-date"
 
 
-class TestMediawikiParamNowiki:
-    """Tests for nowiki wrapping utility."""
-
-    def test_wraps_value(self):
-        from bot import mediawiki_param_nowiki
-        assert mediawiki_param_nowiki("test") == "<nowiki>test</nowiki>"
-
-    def test_handles_empty_string(self):
-        from bot import mediawiki_param_nowiki
-        assert mediawiki_param_nowiki("") == "<nowiki></nowiki>"
-
-    def test_handles_none(self):
-        from bot import mediawiki_param_nowiki
-        assert mediawiki_param_nowiki(None) == "<nowiki></nowiki>"
-
-    def test_wraps_special_characters(self):
-        from bot import mediawiki_param_nowiki
-        assert mediawiki_param_nowiki("foo|bar}}[[link]]") == "<nowiki>foo|bar}}[[link]]</nowiki>"
-
-
 class TestFormatEntry:
     """Tests for log entry formatting."""
 
     def test_basic_entry_format(self):
-        from bot import format_entry
+        from entries import format_entry
         log_event = {
             "logid": 12345,
             "user": "Admin",
@@ -310,7 +288,7 @@ class TestFormatEntry:
         assert "}}" in result
 
     def test_entry_with_empty_topic(self):
-        from bot import format_entry
+        from entries import format_entry
         log_event = {
             "logid": 12345,
             "user": "Admin",
@@ -326,7 +304,7 @@ class TestFormatEntry:
         # Should have empty topic parameter
 
     def test_entry_with_pending_changes(self):
-        from bot import format_entry
+        from entries import format_entry
         log_event = {
             "logid": 67890,
             "user": "AdminTwo",
