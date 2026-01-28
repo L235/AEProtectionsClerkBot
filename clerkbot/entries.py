@@ -7,6 +7,11 @@ Provides functions to format protection log events as wikitext template invocati
 from clerkbot.constants import AE_ENTRY_TEMPLATE
 from clerkbot.timestamp import format_expiry, to_mediawiki_timestamp
 
+__all__ = [
+    'build_action_string',
+    'format_entry',
+]
+
 
 def build_action_string(log_event: dict) -> str:
     """
@@ -81,27 +86,14 @@ def format_entry(log_event: dict, topic_code: str) -> str:
     date_str = to_mediawiki_timestamp(timestamp_value)
     action_str = build_action_string(log_event)
 
-    # Parameters are used directly in template format without nowiki wrapping
-    action_param = action_str
-    summary_param = comment
-
-    # topic may be empty string
-    topic_part = topic_code
-
     return (
         "{{" + AE_ENTRY_TEMPLATE
         + f"|logid={logid}"
         f"|admin={user}"
         f"|page={title}"
         f"|date={date_str}"
-        f"|action={action_param}"
-        f"|summary={summary_param}"
-        f"|topic={topic_part}"
+        f"|action={action_str}"
+        f"|summary={comment}"
+        f"|topic={topic_code}"
         "}}"
     )
-
-
-__all__ = [
-    'build_action_string',
-    'format_entry',
-]

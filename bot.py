@@ -59,7 +59,7 @@ from mwclient.page import Page as MWPage
 # Local imports
 from clerkbot.config import BotConfig, NotifyMode
 from clerkbot.constants import ENTRY_LOGID_RE, FOOTER_MARK
-from clerkbot.entries import build_action_string, format_entry
+from clerkbot.entries import format_entry
 from clerkbot.filters import is_arbitration_enforcement
 from clerkbot.timestamp import (
     LAST_UPDATED_RE,

@@ -7,6 +7,13 @@ and make future updates easier.
 
 import re
 
+__all__ = [
+    'AE_ENTRY_TEMPLATE',
+    'ENTRY_LOGID_RE',
+    'HEADER_MARK',
+    'FOOTER_MARK',
+]
+
 # Template name for AE protection log entries
 AE_ENTRY_TEMPLATE = "User:ClerkBot/AE entry"
 
@@ -19,11 +26,3 @@ ENTRY_LOGID_RE = re.compile(
 # Lightweight presence checks for header/footer markers
 HEADER_MARK = "{{/header}}"
 FOOTER_MARK = "{{/footer}}"
-
-
-__all__ = [
-    'AE_ENTRY_TEMPLATE',
-    'ENTRY_LOGID_RE',
-    'HEADER_MARK',
-    'FOOTER_MARK',
-]

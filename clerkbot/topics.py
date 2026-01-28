@@ -11,6 +11,10 @@ import re
 from typing import Dict, List
 from urllib.request import Request, urlopen
 
+__all__ = [
+    'TopicDetector',
+    'load_topics',
+]
 
 log = logging.getLogger(__name__)
 
@@ -88,7 +92,7 @@ class TopicDetector:
         # Matches topic codes when they appear as standalone words, not embedded in longer words
         for code in self.codes:
             if self._code_res[code].search(lower):
-                if code not in ("at", ): # temporary fix for "at"
+                if code not in ("at",):  # see #17 for "at" exclusion
                     return code
 
         # No topic detected - return empty string
@@ -120,9 +124,3 @@ def load_topics(url: str, user_agent: str) -> TopicDetector:
     if not codes or not page_to_code:
         raise ValueError("Configuration JSON missing required keys 'codes' or 'specific_pages'")
     return TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
-
-
-__all__ = [
-    'TopicDetector',
-    'load_topics',
-]
