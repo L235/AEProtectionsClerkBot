@@ -417,13 +417,14 @@ def _process_new_log_entries(
     return new_entries, unclassified_by_admin
 
 
-def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
+def _build_updated_page_text(text: str, new_entries: List[str], pipeline_label: str = "AE") -> str:
     """
     Build updated page content with new entries and updated timestamp.
 
     Args:
         text: Current page text
         new_entries: List of new entry template strings to append
+        pipeline_label: Label for log messages (e.g. "AE" or "GS")
 
     Returns:
         Updated page text with new entries, updated timestamp, and footer repositioned
@@ -449,7 +450,7 @@ def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
         append_block = "\n".join(new_entries) + "\n"
         new_text = new_text + append_block
     else:
-        log.info("No new AE protection actions to append.")
+        log.info("No new %s protection actions to append.", pipeline_label)
 
     # Re-add the footer marker at the very end, after all entries
     # This ensures the page structure remains: header -> entries -> footer
@@ -461,7 +462,7 @@ def _build_updated_page_text(text: str, new_entries: List[str]) -> str:
     return new_text
 
 
-def _save_page_update(site: mwclient.Site, target_page: str, new_text: str, new_entries: List[str], base_revid: int) -> None:
+def _save_page_update(site: mwclient.Site, target_page: str, new_text: str, new_entries: List[str], base_revid: int, pipeline_label: str = "AE") -> None:
     """
     Save the updated page text to Wikipedia with edit conflict detection.
 
@@ -471,6 +472,7 @@ def _save_page_update(site: mwclient.Site, target_page: str, new_text: str, new_
         new_text: The complete new page text to save
         new_entries: List of new entries (used for edit summary)
         base_revid: The revision ID that the edit is based on (for conflict detection)
+        pipeline_label: Label for edit summaries (e.g. "AE" or "GS")
 
     Returns:
         None
@@ -479,7 +481,7 @@ def _save_page_update(site: mwclient.Site, target_page: str, new_text: str, new_
         mwclient.errors.EditError: If an edit conflict occurs or other API error
     """
     edit_summary = (
-        f"updating AE protection log"
+        f"updating {pipeline_label} protection log"
         f"{f' ({len(new_entries)} new entries)' if new_entries else ''}"
         " ([[User:ClerkBot#t3|bot task 3]])"
     )
@@ -511,7 +513,7 @@ def _run_pipeline(
     notify_mode: NotifyMode,
     dryrun_page: str,
     bot_usernames: Set[str],
-    config: BotConfig,
+    pipeline_label: str = "AE",
 ) -> int:
     """
     Run one pipeline (AE or GS).
@@ -527,7 +529,7 @@ def _run_pipeline(
         notify_mode: NotifyMode for admin notifications
         dryrun_page: Page for debug notifications
         bot_usernames: Set of bot usernames to exclude from notifications
-        config: Full BotConfig (for notification text building)
+        pipeline_label: Label for edit summaries and log messages (e.g. "AE" or "GS")
 
     Returns:
         0 on success, 2 on setup error, 1 on API error
@@ -554,7 +556,7 @@ def _run_pipeline(
     )
 
     # Build updated page text
-    new_text = _build_updated_page_text(text, new_entries)
+    new_text = _build_updated_page_text(text, new_entries, pipeline_label)
 
     # If nothing changed at all, bail out
     if new_text == text:
@@ -563,7 +565,7 @@ def _run_pipeline(
 
     # Save the updated page
     try:
-        _save_page_update(site, target_page, new_text, new_entries, base_revid)
+        _save_page_update(site, target_page, new_text, new_entries, base_revid, pipeline_label)
     except mwclient.errors.EditError as e:
         log.error("Failed to save page due to edit conflict or error: %s", e)
         log.error("Another user may have edited the page. Please re-run the bot.")
@@ -609,7 +611,7 @@ def main() -> int:
         notify_mode=config.notify_mode,
         dryrun_page=config.dryrun_page,
         bot_usernames=bot_usernames,
-        config=config,
+        pipeline_label="AE",
     )
     if ae_result != 0:
         return ae_result
@@ -624,7 +626,7 @@ def main() -> int:
             notify_mode=config.gs_notify_mode,
             dryrun_page=config.gs_dryrun_page,
             bot_usernames=bot_usernames,
-            config=config,
+            pipeline_label="GS",
         )
         if gs_result != 0:
             return gs_result

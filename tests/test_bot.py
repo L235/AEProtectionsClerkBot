@@ -474,26 +474,7 @@ class TestRunPipeline:
             override_strings={},
         )
 
-    @pytest.fixture
-    def gs_detector(self):
-        from clerkbot.topics import TopicDetector
-        return TopicDetector(
-            codes=["kurd", "aa"],
-            page_to_code={"Wikipedia:General sanctions/Kurds and Kurdistan": "kurd"},
-            override_strings={"gs/kurd": "kurd", "gs/aa": "aa"},
-        )
-
-    @pytest.fixture
-    def base_config(self):
-        from clerkbot.config import BotConfig
-        return BotConfig(
-            username="test",
-            password="pass",
-            target_page="User:Bot/AE Log",
-            gs_target_page="User:Bot/GS Log",
-        )
-
-    def test_run_pipeline_returns_zero_on_success(self, mock_site, ae_detector, base_config):
+    def test_run_pipeline_returns_zero_on_success(self, mock_site, ae_detector):
         from unittest.mock import Mock, patch
         from bot import _run_pipeline
         from clerkbot.config import NotifyMode
@@ -515,11 +496,11 @@ class TestRunPipeline:
                 notify_mode=NotifyMode.DISABLED,
                 dryrun_page="",
                 bot_usernames=set(),
-                config=base_config,
+                pipeline_label="AE",
             )
         assert result == 0
 
-    def test_run_pipeline_returns_2_for_missing_page(self, mock_site, ae_detector, base_config):
+    def test_run_pipeline_returns_2_for_missing_page(self, mock_site, ae_detector):
         from unittest.mock import Mock
         from bot import _run_pipeline
         from clerkbot.config import NotifyMode
@@ -537,7 +518,7 @@ class TestRunPipeline:
             notify_mode=NotifyMode.DISABLED,
             dryrun_page="",
             bot_usernames=set(),
-            config=base_config,
+            pipeline_label="AE",
         )
         assert result == 2
 
