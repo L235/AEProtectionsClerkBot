@@ -220,3 +220,107 @@ class TestIsCommunityGS:
     def test_special_characters_in_comment(self):
         assert is_community_sanction("[[WP:GS/KURD|community sanctions]]")
         assert is_community_sanction("Protection: [[Wikipedia:General sanctions/Weather events]]")
+
+
+class TestRealWorldComments:
+    """
+    Tests against real edit summaries from Wikipedia protection logs.
+    Source: 5000 recent protect log events queried 2026-03-26.
+    """
+
+    # --- AE-only comments: match AE, NOT GS ---
+
+    @pytest.mark.parametrize("comment", [
+        "Violations of the [[WP:BLP|biographies of living persons policy]] - [[WP:CT/BLP]]; requested at [[WP:RfPP]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]] - arbitration enforcment: [[WP:CT/GG]]; requested at [[WP:RfPP]]",
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/IMH]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]] - arbitration enforcement: [[WP:CT/SA]]; requested at [[WP:RfPP]]",
+        "[[WP:CTOP|Contentious topic]] restriction: [[WP:BLPCT]]",
+        "[[WP:30/500|Arbitration enforcement]] [[WP:CT/IMH]]",
+        "[[WP:30/500|Arbitration enforcement]], [[WP:CT/SA]], edit warring and other disruptive editing from TAs and autoconfirmed",
+    ])
+    def test_ae_only_matches_ae(self, comment):
+        assert is_arbitration_enforcement(comment)
+
+    @pytest.mark.parametrize("comment", [
+        "Violations of the [[WP:BLP|biographies of living persons policy]] - [[WP:CT/BLP]]; requested at [[WP:RfPP]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]] - arbitration enforcment: [[WP:CT/GG]]; requested at [[WP:RfPP]]",
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/IMH]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]] - arbitration enforcement: [[WP:CT/SA]]; requested at [[WP:RfPP]]",
+        "[[WP:CTOP|Contentious topic]] restriction: [[WP:BLPCT]]",
+        "[[WP:30/500|Arbitration enforcement]] [[WP:CT/IMH]]",
+    ])
+    def test_ae_only_does_not_match_gs(self, comment):
+        assert not is_community_sanction(comment)
+
+    # --- GS-only comments: match GS, NOT AE ---
+
+    @pytest.mark.parametrize("comment", [
+        "Per [[WP:GS/KURD]]",
+        "[[Wikipedia:General sanctions/Armenia and Azerbaijan]]",
+        "[[WP:GS#Community sanctions|Community sanctions enforcement]]: WP:GS/KURD",
+        "[[WP:GS#Community sanctions|Community sanctions enforcement]]: per RFPP and [[WP:GS/PAGEANT]]",
+        "Enforcement for [[WP:GS/PW]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]] - [[WP:GS/MJ]]; requested at [[WP:RfPP]]",
+        "[[WP:GS/RUSUKR]]",
+        "Per [[Wikipedia:General sanctions/Russo-Ukrainian war]]",
+        "Per [[Wikipedia:General sanctions/Kurds and Kurdistan]]",
+        "[[WP:GS#Community sanctions|Community sanctions enforcement]]: per [[WP:GS/ACAS]]",
+    ])
+    def test_gs_only_matches_gs(self, comment):
+        assert is_community_sanction(comment)
+
+    @pytest.mark.parametrize("comment", [
+        "Per [[WP:GS/KURD]]",
+        "[[Wikipedia:General sanctions/Armenia and Azerbaijan]]",
+        "Enforcement for [[WP:GS/PW]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]] - [[WP:GS/MJ]]; requested at [[WP:RfPP]]",
+        "[[WP:GS/RUSUKR]]",
+        "Per [[Wikipedia:General sanctions/Russo-Ukrainian war]]",
+    ])
+    def test_gs_only_does_not_match_ae(self, comment):
+        assert not is_arbitration_enforcement(comment)
+
+    # --- Dual-authority comments: match BOTH ---
+
+    @pytest.mark.parametrize("comment", [
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]",
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]; requested at [[WP:RfPP]]",
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/AA]]/[[WP:GS/AA]]; requested at [[WP:RfPP]]",
+        "Persistent [[WP:Vandalism|vandalism]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]; requested at [[WP:RfPP]]",
+        "[[WP:CT/A-I]], [[WP:GS/KURD]]",
+    ])
+    def test_dual_matches_both_ae(self, comment):
+        assert is_arbitration_enforcement(comment)
+
+    @pytest.mark.parametrize("comment", [
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]",
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]; requested at [[WP:RfPP]]",
+        "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/AA]]/[[WP:GS/AA]]; requested at [[WP:RfPP]]",
+        "Persistent [[WP:Vandalism|vandalism]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]; requested at [[WP:RfPP]]",
+        "[[WP:CT/A-I]], [[WP:GS/KURD]]",
+    ])
+    def test_dual_matches_both_gs(self, comment):
+        assert is_community_sanction(comment)
+
+    # --- Neither: should match nothing ---
+
+    @pytest.mark.parametrize("comment", [
+        "[[WP:SALT|Repeatedly recreated]] by socks",
+        "[[WP:SALT|Repeatedly recreated]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]]; requested at [[WP:RfPP]]",
+        "Restoring protection by [[User:Pathoschild|Pathoschild]]",
+        "",
+    ])
+    def test_neither_matches_ae(self, comment):
+        assert not is_arbitration_enforcement(comment)
+
+    @pytest.mark.parametrize("comment", [
+        "[[WP:SALT|Repeatedly recreated]] by socks",
+        "[[WP:SALT|Repeatedly recreated]]",
+        "Persistent [[WP:Disruptive editing|disruptive editing]]; requested at [[WP:RfPP]]",
+        "Restoring protection by [[User:Pathoschild|Pathoschild]]",
+        "",
+    ])
+    def test_neither_matches_gs(self, comment):
+        assert not is_community_sanction(comment)

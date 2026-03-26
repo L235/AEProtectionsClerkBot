@@ -242,3 +242,161 @@ class TestLoadTopicsGS:
         assert ae_detector.detect("WP:CT/AP") == "ap"
         assert gs_detector.detect("gs/kurd") == ""
         assert gs_detector.detect("anything") == ""
+
+
+class TestRealWorldTopicDetection:
+    """
+    Tests topic detection against real edit summaries from Wikipedia.
+    Source: 5000 recent protect log events queried 2026-03-26.
+    """
+
+    @pytest.fixture
+    def ae_detector(self):
+        """AE detector with production-like config."""
+        return TopicDetector(
+            codes=["a-a", "a-i", "ap", "blp", "cam", "ee", "gg", "gmo",
+                   "horn", "irp", "kurd", "mos", "ps", "r-i", "sa", "tt",
+                   "imh", "sasg", "covid", "ab", "at", "cid", "rne", "ya"],
+            page_to_code={
+                "Wikipedia:Contentious topics/Armenia-Azerbaijan": "a-a",
+                "Wikipedia:Contentious topics/Arab\u2013Israeli conflict": "a-i",
+                "Wikipedia:Contentious topics/American politics": "ap",
+                "Wikipedia:Contentious topics/Biographies of Living Persons": "blp",
+                "Wikipedia:Contentious topics/South Asia": "sa",
+                "Wikipedia:Contentious topics/Gender and sexuality": "gg",
+                "Wikipedia:Contentious topics/Kurds and Kurdistan": "kurd",
+            },
+            override_strings={
+                "arbind": "sa",
+                "pia": "a-i",
+                "balkans": "ee",
+                "arbimh": "imh",
+                "blpct": "blp",
+                "blpds": "blp",
+            },
+        )
+
+    @pytest.fixture
+    def gs_detector(self):
+        """GS detector with production-like config."""
+        return TopicDetector(
+            codes=["scw&isil", "crypto", "pw", "mj", "pageant", "rusukr",
+                   "uyghur", "aa", "kurd", "acas", "we"],
+            page_to_code={
+                "Wikipedia:General sanctions/Kurds and Kurdistan": "kurd",
+                "Wikipedia:General sanctions/Armenia and Azerbaijan": "aa",
+                "Wikipedia:General sanctions/Russo-Ukrainian war": "rusukr",
+                "Wikipedia:General sanctions/Professional wrestling": "pw",
+                "Wikipedia:General sanctions/Michael Jackson": "mj",
+                "Wikipedia:General sanctions/Assyrian, Chaldean, Aramean and Syriac topics": "acas",
+                "Wikipedia:General sanctions/Weather events": "we",
+            },
+            override_strings={
+                "gs/kurd": "kurd",
+                "gs/aa": "aa",
+                "gs/acas": "acas",
+                "gs/rusukr": "rusukr",
+                "gs/pw": "pw",
+                "gs/mj": "mj",
+                "gs/pageant": "pageant",
+                "gs/scw": "scw&isil",
+                "gs/isil": "scw&isil",
+            },
+        )
+
+    # AE detector on real AE comments
+    def test_ae_ct_blp(self, ae_detector):
+        assert ae_detector.detect(
+            "Violations of the [[WP:BLP|biographies of living persons policy]] - [[WP:CT/BLP]]; requested at [[WP:RfPP]]"
+        ) == "blp"
+
+    def test_ae_ct_gg(self, ae_detector):
+        assert ae_detector.detect(
+            "Persistent [[WP:Disruptive editing|disruptive editing]] - arbitration enforcment: [[WP:CT/GG]]; requested at [[WP:RfPP]]"
+        ) == "gg"
+
+    def test_ae_ct_imh(self, ae_detector):
+        assert ae_detector.detect(
+            "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/IMH]]"
+        ) == "imh"
+
+    def test_ae_ct_sa(self, ae_detector):
+        assert ae_detector.detect(
+            "Persistent [[WP:Disruptive editing|disruptive editing]] - arbitration enforcement: [[WP:CT/SA]]; requested at [[WP:RfPP]]"
+        ) == "sa"
+
+    def test_ae_blpct(self, ae_detector):
+        assert ae_detector.detect(
+            "[[WP:CTOP|Contentious topic]] restriction: [[WP:BLPCT]]"
+        ) == "blp"
+
+    # GS detector on real GS comments
+    def test_gs_kurd(self, gs_detector):
+        assert gs_detector.detect("Per [[WP:GS/KURD]]") == "kurd"
+
+    def test_gs_aa_full_page(self, gs_detector):
+        assert gs_detector.detect(
+            "[[Wikipedia:General sanctions/Armenia and Azerbaijan]]"
+        ) == "aa"
+
+    def test_gs_pw(self, gs_detector):
+        assert gs_detector.detect("Enforcement for [[WP:GS/PW]]") == "pw"
+
+    def test_gs_mj(self, gs_detector):
+        assert gs_detector.detect(
+            "Persistent [[WP:Disruptive editing|disruptive editing]] - [[WP:GS/MJ]]; requested at [[WP:RfPP]]"
+        ) == "mj"
+
+    def test_gs_rusukr(self, gs_detector):
+        assert gs_detector.detect("[[WP:GS/RUSUKR]]") == "rusukr"
+
+    def test_gs_rusukr_full_page(self, gs_detector):
+        assert gs_detector.detect(
+            "Per [[Wikipedia:General sanctions/Russo-Ukrainian war]]"
+        ) == "rusukr"
+
+    def test_gs_acas(self, gs_detector):
+        assert gs_detector.detect(
+            "[[WP:GS#Community sanctions|Community sanctions enforcement]]: per [[WP:GS/ACAS]]"
+        ) == "acas"
+
+    def test_gs_pageant(self, gs_detector):
+        assert gs_detector.detect(
+            "[[WP:GS#Community sanctions|Community sanctions enforcement]]: per RFPP and [[WP:GS/PAGEANT]]"
+        ) == "pageant"
+
+    # Dual-authority: AE detector gets AE code, GS detector gets GS code
+    def test_dual_ae_detector_gets_kurd(self, ae_detector):
+        assert ae_detector.detect(
+            "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]"
+        ) == "kurd"
+
+    def test_dual_gs_detector_gets_kurd(self, gs_detector):
+        assert gs_detector.detect(
+            "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]"
+        ) == "kurd"
+
+    def test_dual_ae_detector_on_ct_aa(self, ae_detector):
+        comment = "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/AA]]/[[WP:GS/AA]]; requested at [[WP:RfPP]]"
+        # AE detector extracts "aa" from CT/AA shortcut, but the AE code is "a-a" not "aa".
+        # The shortcut regex extracts "aa" which isn't in AE codes, so it falls through
+        # to bare-code matching where "a-a" also won't match "aa".
+        # This documents a real config gap: CT/AA needs an override or code alias.
+        result = ae_detector.detect(comment)
+        assert result == ""  # Documents current behavior — needs config fix
+
+    def test_dual_gs_detector_gets_aa(self, gs_detector):
+        assert gs_detector.detect(
+            "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/AA]]/[[WP:GS/AA]]"
+        ) == "aa"
+
+    # Cross-detector: AE detector should NOT detect GS codes, and vice versa
+    def test_ae_detector_ignores_gs_comment(self, ae_detector):
+        assert ae_detector.detect("Per [[WP:GS/RUSUKR]]") == ""
+
+    def test_gs_detector_ignores_ae_comment(self, gs_detector):
+        # GS detector doesn't have "blp" code
+        result = gs_detector.detect(
+            "Violations of the [[WP:BLP|biographies of living persons policy]] - [[WP:CT/BLP]]"
+        )
+        assert result == ""
