@@ -43,6 +43,7 @@ GS_TRIGGERS = [
     "community sanction",
     "community-designated contentious topic",
     "wp:gs/",
+    "wp:gs ",
     "wikipedia:gs/",
     "wp:gs|",
     "wikipedia:gs|",

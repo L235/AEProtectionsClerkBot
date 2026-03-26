@@ -177,6 +177,10 @@ class TestIsCommunityGS:
     def test_community_designated_phrase(self):
         assert is_community_sanction("community-designated contentious topic")
 
+    def test_wp_gs_bare_with_space(self):
+        assert is_community_sanction("Per WP:GS enforcement")
+        assert is_community_sanction("WP:GS applies here")
+
     def test_case_insensitive(self):
         assert is_community_sanction("WP:GS/KURD")
         assert is_community_sanction("wp:gs/kurd")

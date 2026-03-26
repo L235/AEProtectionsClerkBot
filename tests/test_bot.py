@@ -526,18 +526,6 @@ class TestRunPipeline:
 class TestDualPipeline:
     """Tests for AE + GS dual pipeline behavior."""
 
-    def test_gs_pipeline_skipped_when_not_configured(self):
-        """GS pipeline should not run when gs_target_page is empty."""
-        from clerkbot.config import BotConfig, NotifyMode
-        config = BotConfig(
-            username="test", password="pass",
-            target_page="User:Bot/AE Log",
-            gs_target_page="",
-        )
-        assert config.gs_target_page == ""
-        # This is tested implicitly by main() — gs_target_page == "" means
-        # the GS _run_pipeline call is skipped entirely
-
     def test_ae_filter_does_not_match_gs_only(self):
         """AE filter should not match GS-only comments."""
         assert not is_arbitration_enforcement("Per [[WP:GS/KURD]]")
