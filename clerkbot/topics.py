@@ -8,7 +8,7 @@ using multiple heuristics in priority order.
 import json
 import logging
 import re
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from urllib.request import Request, urlopen
 
 __all__ = [
@@ -99,7 +99,7 @@ class TopicDetector:
         return ""
 
 
-def load_topics(url: str, user_agent: str) -> tuple:
+def load_topics(url: str, user_agent: str) -> Tuple["TopicDetector", "TopicDetector"]:
     """
     Load topic detection configuration from a URL.
 

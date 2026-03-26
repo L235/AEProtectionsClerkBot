@@ -53,7 +53,7 @@ import logging
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Dict, Iterable, List, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Set, Tuple
 
 # Third-party imports
 import mwclient
@@ -316,7 +316,7 @@ def _notify_admins(
 def _process_single_log_event(
     log_event: dict,
     detector: TopicDetector,
-    filter_fn,
+    filter_fn: Callable[[str], bool],
     existing_logids: set,
     new_entries: List[str],
     unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]],
@@ -377,7 +377,7 @@ def _get_event_sort_key(log_event: dict) -> float:
 def _process_new_log_entries(
     site: mwclient.Site,
     detector: TopicDetector,
-    filter_fn,
+    filter_fn: Callable[[str], bool],
     last_updated_dt: datetime,
     existing_logids: set,
 ) -> Tuple[List[str], Dict[str, List[Tuple[int, str, str]]]]:
@@ -508,7 +508,7 @@ def _save_page_update(site: mwclient.Site, target_page: str, new_text: str, new_
 def _run_pipeline(
     site: mwclient.Site,
     detector: "TopicDetector",
-    filter_fn,
+    filter_fn: Callable[[str], bool],
     target_page: str,
     notify_mode: NotifyMode,
     dryrun_page: str,
