@@ -160,3 +160,87 @@ class TestBotConfig:
         """Test that log level is converted to uppercase."""
         config = BotConfig.from_environment()
         assert config.log_level == "WARNING"
+
+
+class TestBotConfigGS:
+    """Tests for GS-related configuration fields."""
+
+    def test_gs_defaults_when_not_set(self):
+        """GS pipeline defaults to disabled."""
+        config = BotConfig(
+            username="test",
+            password="pass",
+            target_page="User:Bot/Log"
+        )
+        assert config.gs_target_page == ""
+        assert config.gs_notify_mode == NotifyMode.DISABLED
+        assert config.gs_dryrun_page == ""
+
+    def test_gs_dryrun_page_computed(self):
+        """gs_dryrun_page is computed from gs_target_page if not set."""
+        config = BotConfig(
+            username="test",
+            password="pass",
+            target_page="User:Bot/AE Log",
+            gs_target_page="User:Bot/GS Log"
+        )
+        assert config.gs_dryrun_page == "User:Bot/GS Log/notifications_dryrun"
+
+    def test_gs_dryrun_page_explicit(self):
+        """Explicit gs_dryrun_page is preserved."""
+        config = BotConfig(
+            username="test",
+            password="pass",
+            target_page="User:Bot/AE Log",
+            gs_target_page="User:Bot/GS Log",
+            gs_dryrun_page="User:Bot/GS Dryrun"
+        )
+        assert config.gs_dryrun_page == "User:Bot/GS Dryrun"
+
+    def test_gs_dryrun_page_empty_when_gs_disabled(self):
+        """gs_dryrun_page stays empty when gs_target_page is empty."""
+        config = BotConfig(
+            username="test",
+            password="pass",
+            target_page="User:Bot/Log",
+            gs_target_page=""
+        )
+        assert config.gs_dryrun_page == ""
+
+    @patch.dict(os.environ, {
+        "CLERKBOT_USERNAME": "TestBot",
+        "CLERKBOT_PASSWORD": "secret123",
+        "CLERKBOT_TARGET_PAGE": "User:TestBot/AE log",
+    }, clear=True)
+    def test_from_environment_gs_disabled_by_default(self):
+        """GS pipeline is disabled when env vars are not set."""
+        config = BotConfig.from_environment()
+        assert config.gs_target_page == ""
+        assert config.gs_notify_mode == NotifyMode.DISABLED
+
+    @patch.dict(os.environ, {
+        "CLERKBOT_USERNAME": "TestBot",
+        "CLERKBOT_PASSWORD": "secret123",
+        "CLERKBOT_TARGET_PAGE": "User:TestBot/AE log",
+        "CLERKBOT_GS_TARGET_PAGE": "User:TestBot/GS log",
+        "CLERKBOT_GS_NOTIFY_ADMINS": "debug",
+        "CLERKBOT_GS_NOTIFICATIONS_DRYRUN_PAGE": "User:TestBot/GS dryrun",
+    }, clear=True)
+    def test_from_environment_gs_full(self):
+        """GS configuration is loaded from environment."""
+        config = BotConfig.from_environment()
+        assert config.gs_target_page == "User:TestBot/GS log"
+        assert config.gs_notify_mode == NotifyMode.DEBUG
+        assert config.gs_dryrun_page == "User:TestBot/GS dryrun"
+
+    @patch.dict(os.environ, {
+        "CLERKBOT_USERNAME": "TestBot",
+        "CLERKBOT_PASSWORD": "secret123",
+        "CLERKBOT_TARGET_PAGE": "User:TestBot/AE log",
+        "CLERKBOT_GS_TARGET_PAGE": "User:TestBot/GS log",
+        "CLERKBOT_GS_NOTIFY_ADMINS": "invalid",
+    }, clear=True)
+    def test_from_environment_gs_invalid_notify_defaults_disabled(self):
+        """Invalid GS notify mode defaults to DISABLED (not DEBUG like AE)."""
+        config = BotConfig.from_environment()
+        assert config.gs_notify_mode == NotifyMode.DISABLED
