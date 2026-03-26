@@ -1,5 +1,5 @@
 """
-Topic detection for CTOP (Contentious Topic) codes.
+Topic detection for CTOP (Contentious Topic) and GS (General Sanctions) codes.
 
 Provides TopicDetector class that detects topic codes from edit summaries
 using multiple heuristics in priority order.
@@ -8,7 +8,7 @@ using multiple heuristics in priority order.
 import json
 import logging
 import re
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from urllib.request import Request, urlopen
 
 __all__ = [
@@ -99,7 +99,7 @@ class TopicDetector:
         return ""
 
 
-def load_topics(url: str, user_agent: str) -> TopicDetector:
+def load_topics(url: str, user_agent: str) -> Tuple["TopicDetector", "TopicDetector"]:
     """
     Load topic detection configuration from a URL.
 
@@ -108,7 +108,7 @@ def load_topics(url: str, user_agent: str) -> TopicDetector:
         user_agent: User-Agent header for the request
 
     Returns:
-        TopicDetector instance configured with the fetched data
+        Tuple of (ae_detector, gs_detector) TopicDetector instances
 
     Raises:
         ValueError: If the configuration JSON is missing required keys
@@ -123,4 +123,13 @@ def load_topics(url: str, user_agent: str) -> TopicDetector:
     override_strings = data.get("override_strings", {})
     if not codes or not page_to_code:
         raise ValueError("Configuration JSON missing required keys 'codes' or 'specific_pages'")
-    return TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
+
+    ae_detector = TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
+
+    # GS detector — gracefully handle missing keys
+    gs_codes = data.get("gs_codes", [])
+    gs_page_to_code = data.get("gs_specific_pages", {})
+    gs_override_strings = data.get("gs_override_strings", {})
+    gs_detector = TopicDetector(codes=gs_codes, page_to_code=gs_page_to_code, override_strings=gs_override_strings)
+
+    return ae_detector, gs_detector

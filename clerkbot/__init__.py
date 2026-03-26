@@ -1,15 +1,15 @@
 """
-ClerkBot - AE protection actions logger package.
+ClerkBot - AE and GS protection actions logger package.
 
 This package provides modules for monitoring Wikipedia's protection log for
-arbitration enforcement (AE) actions and automatically appending them to a
-designated tracking page.
+arbitration enforcement (AE) and community general sanctions (GS) actions
+and automatically appending them to designated tracking pages.
 """
 
 from clerkbot.config import BotConfig, NotifyMode
 from clerkbot.constants import AE_ENTRY_TEMPLATE, ENTRY_LOGID_RE, FOOTER_MARK, HEADER_MARK
 from clerkbot.entries import build_action_string, format_entry
-from clerkbot.filters import AE_TRIGGERS, is_arbitration_enforcement
+from clerkbot.filters import AE_TRIGGERS, is_arbitration_enforcement, GS_TRIGGERS, is_community_sanction
 from clerkbot.timestamp import (
     LAST_UPDATED_RE,
     clean_invisible_unicode,
@@ -37,6 +37,8 @@ __all__ = [
     # filters
     'AE_TRIGGERS',
     'is_arbitration_enforcement',
+    'GS_TRIGGERS',
+    'is_community_sanction',
     # timestamp
     'LAST_UPDATED_RE',
     'clean_invisible_unicode',

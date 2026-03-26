@@ -38,6 +38,9 @@ class BotConfig:
         notify_mode: Admin notification mode (DISABLED/DEBUG/ENABLED)
         dryrun_page: Page for debug notifications
         log_level: Logging level (default: "INFO")
+        gs_target_page: Target wiki page for GS entries (CLERKBOT_GS_TARGET_PAGE), empty = disabled
+        gs_notify_mode: GS notification mode (default: DISABLED)
+        gs_dryrun_page: Page for GS debug notifications
     """
     # Required fields
     username: str
@@ -53,10 +56,17 @@ class BotConfig:
     dryrun_page: str = field(default="")  # Computed from target_page if not set
     log_level: str = "INFO"
 
+    # GS pipeline fields (optional, disabled by default)
+    gs_target_page: str = ""
+    gs_notify_mode: NotifyMode = NotifyMode.DISABLED
+    gs_dryrun_page: str = field(default="")
+
     def __post_init__(self):
         """Set computed defaults after initialization."""
         if not self.dryrun_page:
             self.dryrun_page = f"{self.target_page}/notifications_dryrun"
+        if self.gs_target_page and not self.gs_dryrun_page:
+            self.gs_dryrun_page = f"{self.gs_target_page}/notifications_dryrun"
 
     @classmethod
     def from_environment(cls) -> "BotConfig":
@@ -74,6 +84,9 @@ class BotConfig:
             CLERKBOT_NOTIFY_ADMINS (optional: "false", "debug", "true")
             CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE (optional)
             CLERKBOT_LOG_LEVEL (optional, default: "INFO")
+            CLERKBOT_GS_TARGET_PAGE (optional, default: "" = GS disabled)
+            CLERKBOT_GS_NOTIFY_ADMINS (optional: "false", "debug", "true", default: "false")
+            CLERKBOT_GS_NOTIFICATIONS_DRYRUN_PAGE (optional)
 
         Returns:
             BotConfig instance
@@ -115,6 +128,14 @@ class BotConfig:
         dryrun_page = os.environ.get("CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE", "")
         log_level = os.environ.get("CLERKBOT_LOG_LEVEL", "INFO").upper()
 
+        # GS pipeline optional values
+        gs_target_page = os.environ.get("CLERKBOT_GS_TARGET_PAGE", "")
+        gs_notify_raw = (os.environ.get("CLERKBOT_GS_NOTIFY_ADMINS") or "").strip().lower()
+        if gs_notify_raw not in (NotifyMode.DISABLED.value, NotifyMode.DEBUG.value, NotifyMode.ENABLED.value):
+            gs_notify_raw = NotifyMode.DISABLED.value
+        gs_notify_mode = NotifyMode(gs_notify_raw)
+        gs_dryrun_page = os.environ.get("CLERKBOT_GS_NOTIFICATIONS_DRYRUN_PAGE", "")
+
         return cls(
             username=username,
             password=password,
@@ -126,6 +147,9 @@ class BotConfig:
             notify_mode=notify_mode,
             dryrun_page=dryrun_page,
             log_level=log_level,
+            gs_target_page=gs_target_page,
+            gs_notify_mode=gs_notify_mode,
+            gs_dryrun_page=gs_dryrun_page,
         )
 
 

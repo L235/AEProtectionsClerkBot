@@ -12,7 +12,7 @@ from bot import (
     _get_event_sort_key,
 )
 from clerkbot.entries import build_action_string
-from clerkbot.filters import is_arbitration_enforcement
+from clerkbot.filters import is_arbitration_enforcement, is_community_sanction
 from clerkbot.timestamp import (
     parse_mediawiki_sig_timestamp,
     to_mediawiki_sig_timestamp,
@@ -350,6 +350,56 @@ class TestBuildNotificationText:
         assert result.count("* [[Special:Redirect/logid/") == 2
 
 
+class TestNotifyAdminsParams:
+    """Tests for _notify_admins using pipeline-specific parameters."""
+
+    def test_gs_params_forwarded(self):
+        """GS-specific notify_mode, dryrun_page, target_page are used."""
+        from unittest.mock import Mock
+        from bot import _notify_admins
+        from clerkbot.config import NotifyMode
+
+        mock_site = Mock()
+        mock_site.api.return_value = {"edit": {"result": "Success"}}
+
+        unclassified = {"AdminX": [(999, "12:00, 1 January 2026", "GS Page")]}
+        _notify_admins(
+            site=mock_site,
+            unclassified_by_admin=unclassified,
+            token="fake",
+            bot_usernames=set(),
+            notify_mode=NotifyMode.DEBUG,
+            dryrun_page="User:Bot/GS dryrun",
+            target_page="User:Bot/GS Log",
+        )
+
+        mock_site.api.assert_called_once()
+        call_kwargs = mock_site.api.call_args[1]
+        # Should post to the GS dryrun page, not the AE one
+        assert call_kwargs["title"] == "User:Bot/GS dryrun"
+        # Notification text should reference the GS target page
+        assert "User:Bot/GS Log" in call_kwargs["appendtext"]
+
+    def test_disabled_mode_does_not_post(self):
+        """DISABLED notify_mode should not make any API calls."""
+        from unittest.mock import Mock
+        from bot import _notify_admins
+        from clerkbot.config import NotifyMode
+
+        mock_site = Mock()
+        unclassified = {"AdminX": [(999, "12:00, 1 January 2026", "Page")]}
+        _notify_admins(
+            site=mock_site,
+            unclassified_by_admin=unclassified,
+            token="fake",
+            bot_usernames=set(),
+            notify_mode=NotifyMode.DISABLED,
+            dryrun_page="",
+            target_page="User:Bot/Log",
+        )
+        mock_site.api.assert_not_called()
+
+
 class TestEditConflictHandling:
     """Tests for edit conflict detection and handling."""
 
@@ -402,3 +452,102 @@ class TestEditConflictHandling:
                 new_entries=["entry1"],
                 base_revid=12345
             )
+
+
+class TestRunPipeline:
+    """Tests for _run_pipeline helper."""
+
+    @pytest.fixture
+    def mock_site(self):
+        from unittest.mock import Mock
+        site = Mock()
+        site.get_token.return_value = "fake_token"
+        site.api.return_value = {"edit": {"result": "Success"}}
+        return site
+
+    @pytest.fixture
+    def ae_detector(self):
+        from clerkbot.topics import TopicDetector
+        return TopicDetector(
+            codes=["ap", "blp"],
+            page_to_code={"Wikipedia:Contentious topics/American politics": "ap"},
+            override_strings={},
+        )
+
+    def test_run_pipeline_returns_zero_on_success(self, mock_site, ae_detector):
+        from unittest.mock import Mock, patch
+        from bot import _run_pipeline
+        from clerkbot.config import NotifyMode
+
+        page_text = "Last updated: 19:32, 19 August 2025 (UTC)\n{{/header}}\n{{/footer}}\n"
+        mock_page = Mock()
+        mock_page.exists = True
+        mock_page.text.return_value = page_text
+        mock_site.pages.__getitem__ = Mock(return_value=mock_page)
+        mock_page.revisions.return_value = [{"revid": 100}]
+
+        with patch("bot.enumerate_protect_logevents", return_value=[]), \
+             patch("bot.enumerate_stable_logevents", return_value=[]):
+            result = _run_pipeline(
+                site=mock_site,
+                detector=ae_detector,
+                filter_fn=is_arbitration_enforcement,
+                target_page="User:Bot/AE Log",
+                notify_mode=NotifyMode.DISABLED,
+                dryrun_page="",
+                bot_usernames=set(),
+                pipeline_label="AE",
+            )
+        assert result == 0
+
+    def test_run_pipeline_returns_2_for_missing_page(self, mock_site, ae_detector):
+        from unittest.mock import Mock
+        from bot import _run_pipeline
+        from clerkbot.config import NotifyMode
+
+        mock_page = Mock()
+        mock_page.exists = False
+        mock_site.pages.__getitem__ = Mock(return_value=mock_page)
+        mock_page.revisions.return_value = []
+
+        result = _run_pipeline(
+            site=mock_site,
+            detector=ae_detector,
+            filter_fn=is_arbitration_enforcement,
+            target_page="User:Bot/AE Log",
+            notify_mode=NotifyMode.DISABLED,
+            dryrun_page="",
+            bot_usernames=set(),
+            pipeline_label="AE",
+        )
+        assert result == 2
+
+
+class TestDualPipeline:
+    """Tests for AE + GS dual pipeline behavior."""
+
+    def test_ae_filter_does_not_match_gs_only(self):
+        """AE filter should not match GS-only comments."""
+        assert not is_arbitration_enforcement("Per [[WP:GS/KURD]]")
+        assert not is_arbitration_enforcement("[[Wikipedia:General sanctions/Armenia and Azerbaijan]]")
+        assert not is_arbitration_enforcement("community sanction enforcement")
+
+    def test_gs_filter_does_not_match_ae_only(self):
+        """GS filter should not match AE-only comments."""
+        assert not is_community_sanction("Per arbitration enforcement WP:CT/BLP")
+        assert not is_community_sanction("CTOP protection")
+        assert not is_community_sanction("[[WP:AE]] action")
+
+    def test_both_filters_match_dual_authority(self):
+        """Both filters should match dual-authority comments."""
+        dual = "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]"
+        assert is_arbitration_enforcement(dual)
+        assert is_community_sanction(dual)
+
+    def test_dedup_via_logid(self):
+        """Existing logid extraction works for dedup across pipelines."""
+        from bot import extract_existing_logids
+        text = "{{User:ClerkBot/AE entry|logid=12345|admin=A}}\n{{User:ClerkBot/AE entry|logid=67890|admin=B}}"
+        logids = extract_existing_logids(text)
+        assert 12345 in logids
+        assert 67890 in logids
