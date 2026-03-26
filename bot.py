@@ -501,7 +501,7 @@ def main() -> int:
     """
     # Load topic detection data
     try:
-        detector = load_topics(config.config_url, config.user_agent)
+        ae_detector, _gs_detector = load_topics(config.config_url, config.user_agent)
     except Exception as error:
         log.error("Failed to load CTOP topics configuration from '%s': %s", config.config_url, error)
         return 2
@@ -527,7 +527,7 @@ def main() -> int:
 
     # Process new log entries
     new_entries, unclassified_by_admin = _process_new_log_entries(
-        site, detector, last_updated_dt, existing_logids
+        site, ae_detector, last_updated_dt, existing_logids
     )
 
     # Build updated page text

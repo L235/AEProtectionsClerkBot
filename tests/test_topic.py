@@ -119,3 +119,126 @@ class TestTopicDetector:
         # Shortcut should win
         comment = "WP:CT/AP also mentions BLP"
         assert detector.detect(comment) == "ap"
+
+
+class TestGSTopicDetector:
+    """Tests for GS-specific TopicDetector."""
+
+    @pytest.fixture
+    def gs_detector(self):
+        """Create a TopicDetector with GS configuration."""
+        codes = ["kurd", "aa", "acas", "rusukr", "crypto", "pw", "mj", "scw&isil"]
+        page_to_code = {
+            "Wikipedia:General sanctions/Kurds and Kurdistan": "kurd",
+            "Wikipedia:General sanctions/Armenia and Azerbaijan": "aa",
+            "Wikipedia:General sanctions/Assyrian, Chaldean, Aramean and Syriac topics": "acas",
+            "Wikipedia:General sanctions/Russo-Ukrainian war": "rusukr",
+            "Wikipedia:General sanctions/Blockchain and cryptocurrencies": "crypto",
+            "Wikipedia:General sanctions/Professional wrestling": "pw",
+            "Wikipedia:General sanctions/Michael Jackson": "mj",
+        }
+        override_strings = {
+            "gs/kurd": "kurd",
+            "gs/aa": "aa",
+            "gs/acas": "acas",
+            "gs/rusukr": "rusukr",
+            "gs/crypto": "crypto",
+            "gs/pw": "pw",
+            "gs/mj": "mj",
+            "gs/scw": "scw&isil",
+            "gs/isil": "scw&isil",
+        }
+        return TopicDetector(codes=codes, page_to_code=page_to_code, override_strings=override_strings)
+
+    def test_gs_override_string(self, gs_detector):
+        """WP:GS/ shortcuts detected via override strings."""
+        assert gs_detector.detect("Per [[WP:GS/KURD]]") == "kurd"
+        assert gs_detector.detect("[[WP:GS/AA]]") == "aa"
+        assert gs_detector.detect("gs/acas") == "acas"
+
+    def test_gs_specific_page(self, gs_detector):
+        """Full GS page names detected via specific pages."""
+        assert gs_detector.detect("[[Wikipedia:General sanctions/Kurds and Kurdistan]]") == "kurd"
+        assert gs_detector.detect("Wikipedia:General sanctions/Armenia and Azerbaijan") == "aa"
+        assert gs_detector.detect("Per [[Wikipedia:General sanctions/Russo-Ukrainian war]]") == "rusukr"
+
+    def test_gs_bare_code(self, gs_detector):
+        """Bare GS codes detected as tokens."""
+        assert gs_detector.detect("kurd protection") == "kurd"
+        assert gs_detector.detect("RUSUKR enforcement") == "rusukr"
+
+    def test_gs_no_match(self, gs_detector):
+        assert gs_detector.detect("regular protection") == ""
+        assert gs_detector.detect("") == ""
+
+    def test_gs_priority_page_over_override(self, gs_detector):
+        """Specific page match takes priority over override string."""
+        comment = "gs/aa and Wikipedia:General sanctions/Kurds and Kurdistan"
+        assert gs_detector.detect(comment) == "kurd"
+
+    def test_dual_authority_comment(self, gs_detector):
+        """GS detector extracts GS code from dual-authority comment."""
+        assert gs_detector.detect("[[WP:CT/KURD]]/[[WP:GS/KURD]]") == "kurd"
+        assert gs_detector.detect("Arbitration enforcement - [[WP:CT/AA]]/[[WP:GS/AA]]") == "aa"
+
+
+class TestLoadTopicsGS:
+    """Tests for load_topics returning both AE and GS detectors."""
+
+    def test_load_topics_returns_tuple(self):
+        """load_topics should return (ae_detector, gs_detector) tuple."""
+        import json
+        from unittest.mock import patch, MagicMock
+        from clerkbot.topics import load_topics
+
+        config_data = {
+            "codes": ["ap", "blp"],
+            "specific_pages": {
+                "Wikipedia:Contentious topics/American politics": "ap",
+            },
+            "override_strings": {"arbind": "sa"},
+            "gs_codes": ["kurd", "aa"],
+            "gs_specific_pages": {
+                "Wikipedia:General sanctions/Kurds and Kurdistan": "kurd",
+            },
+            "gs_override_strings": {"gs/kurd": "kurd"},
+        }
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(config_data).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        with patch("clerkbot.topics.urlopen", return_value=mock_response):
+            ae_detector, gs_detector = load_topics("http://example.com/config.json", "TestAgent/1.0")
+
+        assert ae_detector.detect("WP:CT/AP") == "ap"
+        assert gs_detector.detect("gs/kurd") == "kurd"
+        # AE detector should NOT know GS codes
+        assert ae_detector.detect("gs/kurd") == ""
+        # GS detector should NOT know AE codes
+        assert gs_detector.detect("WP:CT/AP") == ""
+
+    def test_load_topics_missing_gs_keys_returns_empty_detector(self):
+        """When gs_* keys are absent, GS detector matches nothing."""
+        import json
+        from unittest.mock import patch, MagicMock
+        from clerkbot.topics import load_topics
+
+        config_data = {
+            "codes": ["ap"],
+            "specific_pages": {"Wikipedia:Contentious topics/American politics": "ap"},
+            "override_strings": {},
+        }
+
+        mock_response = MagicMock()
+        mock_response.read.return_value = json.dumps(config_data).encode("utf-8")
+        mock_response.__enter__ = lambda s: s
+        mock_response.__exit__ = MagicMock(return_value=False)
+
+        with patch("clerkbot.topics.urlopen", return_value=mock_response):
+            ae_detector, gs_detector = load_topics("http://example.com/config.json", "TestAgent/1.0")
+
+        assert ae_detector.detect("WP:CT/AP") == "ap"
+        assert gs_detector.detect("gs/kurd") == ""
+        assert gs_detector.detect("anything") == ""
