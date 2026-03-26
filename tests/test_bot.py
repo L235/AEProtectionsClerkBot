@@ -350,6 +350,56 @@ class TestBuildNotificationText:
         assert result.count("* [[Special:Redirect/logid/") == 2
 
 
+class TestNotifyAdminsParams:
+    """Tests for _notify_admins using pipeline-specific parameters."""
+
+    def test_gs_params_forwarded(self):
+        """GS-specific notify_mode, dryrun_page, target_page are used."""
+        from unittest.mock import Mock
+        from bot import _notify_admins
+        from clerkbot.config import NotifyMode
+
+        mock_site = Mock()
+        mock_site.api.return_value = {"edit": {"result": "Success"}}
+
+        unclassified = {"AdminX": [(999, "12:00, 1 January 2026", "GS Page")]}
+        _notify_admins(
+            site=mock_site,
+            unclassified_by_admin=unclassified,
+            token="fake",
+            bot_usernames=set(),
+            notify_mode=NotifyMode.DEBUG,
+            dryrun_page="User:Bot/GS dryrun",
+            target_page="User:Bot/GS Log",
+        )
+
+        mock_site.api.assert_called_once()
+        call_kwargs = mock_site.api.call_args[1]
+        # Should post to the GS dryrun page, not the AE one
+        assert call_kwargs["title"] == "User:Bot/GS dryrun"
+        # Notification text should reference the GS target page
+        assert "User:Bot/GS Log" in call_kwargs["appendtext"]
+
+    def test_disabled_mode_does_not_post(self):
+        """DISABLED notify_mode should not make any API calls."""
+        from unittest.mock import Mock
+        from bot import _notify_admins
+        from clerkbot.config import NotifyMode
+
+        mock_site = Mock()
+        unclassified = {"AdminX": [(999, "12:00, 1 January 2026", "Page")]}
+        _notify_admins(
+            site=mock_site,
+            unclassified_by_admin=unclassified,
+            token="fake",
+            bot_usernames=set(),
+            notify_mode=NotifyMode.DISABLED,
+            dryrun_page="",
+            target_page="User:Bot/Log",
+        )
+        mock_site.api.assert_not_called()
+
+
 class TestEditConflictHandling:
     """Tests for edit conflict detection and handling."""
 

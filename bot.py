@@ -250,7 +250,9 @@ def _notify_admins(
     unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]],
     token: str,
     bot_usernames: Set[str],
-    config: BotConfig,
+    notify_mode: NotifyMode,
+    dryrun_page: str,
+    target_page: str,
 ) -> None:
     """
     Notify admins about protection actions that could not be automatically categorized.
@@ -259,9 +261,9 @@ def _notify_admins(
     to their talk page (or to a debug page) asking them to review the categorization.
     Bot accounts are automatically excluded from notifications.
 
-    Behavior depends on config.notify_mode:
+    Behavior depends on notify_mode:
       - DISABLED: No notifications sent, returns immediately
-      - DEBUG: All notifications appended to config.dryrun_page for testing
+      - DEBUG: All notifications appended to dryrun_page for testing
       - ENABLED: Notifications posted to individual admin talk pages
 
     Args:
@@ -270,13 +272,15 @@ def _notify_admins(
                                for actions that were newly logged but lack a topic code
         token: CSRF token for API edits
         bot_usernames: Set of usernames with bot rights (excluded from notifications)
-        config: Bot configuration
+        notify_mode: NotifyMode for this pipeline
+        dryrun_page: Page for debug notifications
+        target_page: Target page to include in notification text
 
     Returns:
         None
     """
-    if config.notify_mode == NotifyMode.DISABLED:
-        log.info("Notify-admin module disabled (CLERKBOT_NOTIFY_ADMINS=false).")
+    if notify_mode == NotifyMode.DISABLED:
+        log.info("Notify-admin module disabled.")
         return
     if not unclassified_by_admin:
         log.info("Notify-admin module: no unclassified actions to notify.")
@@ -288,13 +292,13 @@ def _notify_admins(
         if admin in bot_usernames:
             log.debug("Notify-admin: skipping bot account %s", admin)
             continue
-        text = _build_notification_text(admin, items, config.target_page)
-        if config.notify_mode == NotifyMode.DEBUG:
-            dest_title = config.dryrun_page
-            summary = f"DEBUG: AE protection categorization notice for {admin}"
+        text = _build_notification_text(admin, items, target_page)
+        if notify_mode == NotifyMode.DEBUG:
+            dest_title = dryrun_page
+            summary = f"DEBUG: protection categorization notice for {admin}"
         else:
             dest_title = f"User talk:{admin}"
-            summary = "adding AE protection categorization notice ([[User:ClerkBot#t3|bot task 3]])"
+            summary = "adding protection categorization notice ([[User:ClerkBot#t3|bot task 3]])"
         try:
             log.info("Posting notification (%d item(s)) to %s", len(items), dest_title)
             site.api(
@@ -569,7 +573,7 @@ def _run_pipeline(
     # Only notify for actions that were newly appended in this run
     if new_entries and unclassified_by_admin:
         token = site.get_token('csrf')
-        _notify_admins(site, unclassified_by_admin, token, bot_usernames, config)
+        _notify_admins(site, unclassified_by_admin, token, bot_usernames, notify_mode, dryrun_page, target_page)
     else:
         log.info("Notify-admin module: nothing to notify.")
 
