@@ -12,7 +12,7 @@ from bot import (
     _get_event_sort_key,
 )
 from clerkbot.entries import build_action_string
-from clerkbot.filters import is_arbitration_enforcement
+from clerkbot.filters import is_arbitration_enforcement, is_community_sanction
 from clerkbot.timestamp import (
     parse_mediawiki_sig_timestamp,
     to_mediawiki_sig_timestamp,
@@ -402,3 +402,91 @@ class TestEditConflictHandling:
                 new_entries=["entry1"],
                 base_revid=12345
             )
+
+
+class TestRunPipeline:
+    """Tests for _run_pipeline helper."""
+
+    @pytest.fixture
+    def mock_site(self):
+        from unittest.mock import Mock
+        site = Mock()
+        site.get_token.return_value = "fake_token"
+        site.api.return_value = {"edit": {"result": "Success"}}
+        return site
+
+    @pytest.fixture
+    def ae_detector(self):
+        from clerkbot.topics import TopicDetector
+        return TopicDetector(
+            codes=["ap", "blp"],
+            page_to_code={"Wikipedia:Contentious topics/American politics": "ap"},
+            override_strings={},
+        )
+
+    @pytest.fixture
+    def gs_detector(self):
+        from clerkbot.topics import TopicDetector
+        return TopicDetector(
+            codes=["kurd", "aa"],
+            page_to_code={"Wikipedia:General sanctions/Kurds and Kurdistan": "kurd"},
+            override_strings={"gs/kurd": "kurd", "gs/aa": "aa"},
+        )
+
+    @pytest.fixture
+    def base_config(self):
+        from clerkbot.config import BotConfig
+        return BotConfig(
+            username="test",
+            password="pass",
+            target_page="User:Bot/AE Log",
+            gs_target_page="User:Bot/GS Log",
+        )
+
+    def test_run_pipeline_returns_zero_on_success(self, mock_site, ae_detector, base_config):
+        from unittest.mock import Mock, patch
+        from bot import _run_pipeline
+        from clerkbot.config import NotifyMode
+
+        page_text = "Last updated: 19:32, 19 August 2025 (UTC)\n{{/header}}\n{{/footer}}\n"
+        mock_page = Mock()
+        mock_page.exists = True
+        mock_page.text.return_value = page_text
+        mock_site.pages.__getitem__ = Mock(return_value=mock_page)
+        mock_page.revisions.return_value = [{"revid": 100}]
+
+        with patch("bot.enumerate_protect_logevents", return_value=[]), \
+             patch("bot.enumerate_stable_logevents", return_value=[]):
+            result = _run_pipeline(
+                site=mock_site,
+                detector=ae_detector,
+                filter_fn=is_arbitration_enforcement,
+                target_page="User:Bot/AE Log",
+                notify_mode=NotifyMode.DISABLED,
+                dryrun_page="",
+                bot_usernames=set(),
+                config=base_config,
+            )
+        assert result == 0
+
+    def test_run_pipeline_returns_2_for_missing_page(self, mock_site, ae_detector, base_config):
+        from unittest.mock import Mock
+        from bot import _run_pipeline
+        from clerkbot.config import NotifyMode
+
+        mock_page = Mock()
+        mock_page.exists = False
+        mock_site.pages.__getitem__ = Mock(return_value=mock_page)
+        mock_page.revisions.return_value = []
+
+        result = _run_pipeline(
+            site=mock_site,
+            detector=ae_detector,
+            filter_fn=is_arbitration_enforcement,
+            target_page="User:Bot/AE Log",
+            notify_mode=NotifyMode.DISABLED,
+            dryrun_page="",
+            bot_usernames=set(),
+            config=base_config,
+        )
+        assert result == 2

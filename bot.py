@@ -60,7 +60,7 @@ from mwclient.page import Page as MWPage
 from clerkbot.config import BotConfig, NotifyMode
 from clerkbot.constants import ENTRY_LOGID_RE, FOOTER_MARK
 from clerkbot.entries import format_entry
-from clerkbot.filters import is_arbitration_enforcement
+from clerkbot.filters import is_arbitration_enforcement, is_community_sanction
 from clerkbot.timestamp import (
     LAST_UPDATED_RE,
     clean_invisible_unicode,
@@ -309,16 +309,18 @@ def _notify_admins(
 def _process_single_log_event(
     log_event: dict,
     detector: TopicDetector,
+    filter_fn,
     existing_logids: set,
     new_entries: List[str],
     unclassified_by_admin: Dict[str, List[Tuple[int, str, str]]],
 ) -> None:
     """
-    Process a single log event and append to new_entries if it's an AE action.
+    Process a single log event and append to new_entries if it passes the filter.
 
     Args:
         log_event: A log event dict from the MediaWiki API
         detector: TopicDetector instance for categorizing actions
+        filter_fn: Callable(str) -> bool, the filter to apply to comments
         existing_logids: Set of log IDs already present on the page
         new_entries: List to append new entry strings to (modified in place)
         unclassified_by_admin: Map to track unclassified actions (modified in place)
@@ -330,9 +332,9 @@ def _process_single_log_event(
         # Already logged
         return
 
-    # Arbitration enforcement filter
+    # Apply the pipeline-specific filter
     comment = log_event.get("comment") or ""
-    if not is_arbitration_enforcement(comment):
+    if not filter_fn(comment):
         return
 
     topic_code = detector.detect(comment)
@@ -368,6 +370,7 @@ def _get_event_sort_key(log_event: dict) -> float:
 def _process_new_log_entries(
     site: mwclient.Site,
     detector: TopicDetector,
+    filter_fn,
     last_updated_dt: datetime,
     existing_logids: set,
 ) -> Tuple[List[str], Dict[str, List[Tuple[int, str, str]]]]:
@@ -378,6 +381,7 @@ def _process_new_log_entries(
     Args:
         site: The mwclient Site connection
         detector: TopicDetector instance for categorizing actions
+        filter_fn: Callable(str) -> bool, the filter to apply to comments
         last_updated_dt: Only process events after this timestamp
         existing_logids: Set of log IDs already present on the page
 
@@ -400,7 +404,7 @@ def _process_new_log_entries(
     # Process events in chronological order
     for log_event in all_events:
         _process_single_log_event(
-            log_event, detector, existing_logids, new_entries, unclassified_by_admin
+            log_event, detector, filter_fn, existing_logids, new_entries, unclassified_by_admin
         )
 
     return new_entries, unclassified_by_admin
@@ -492,33 +496,45 @@ def _save_page_update(site: mwclient.Site, target_page: str, new_text: str, new_
         raise
 
 
-def main() -> int:
+def _run_pipeline(
+    site: mwclient.Site,
+    detector: "TopicDetector",
+    filter_fn,
+    target_page: str,
+    notify_mode: NotifyMode,
+    dryrun_page: str,
+    bot_usernames: Set[str],
+    config: BotConfig,
+) -> int:
     """
-    Main entry point for the ClerkBot AE protection log updater.
+    Run one pipeline (AE or GS).
+
+    Fetches the target page, scans log events through the filter,
+    detects topics, builds updated page text, and saves.
+
+    Args:
+        site: Authenticated mwclient Site
+        detector: TopicDetector for categorizing actions
+        filter_fn: Callable(str) -> bool, the filter to apply to comments
+        target_page: Wiki page title to update
+        notify_mode: NotifyMode for admin notifications
+        dryrun_page: Page for debug notifications
+        bot_usernames: Set of bot usernames to exclude from notifications
+        config: Full BotConfig (for notification text building)
 
     Returns:
-        0 on success, 2 on configuration/setup error, 1 on API error
+        0 on success, 2 on setup error, 1 on API error
     """
-    # Load topic detection data
-    try:
-        ae_detector, _gs_detector = load_topics(config.config_url, config.user_agent)
-    except Exception as error:
-        log.error("Failed to load CTOP topics configuration from '%s': %s", config.config_url, error)
-        return 2
-
-    # Connect to Wikipedia and load the target page
-    site = connect_site(config)
-    bot_usernames = fetch_bot_usernames(site)
-    page, base_revid = fetch_target_page(site, config.target_page)
+    page, base_revid = fetch_target_page(site, target_page)
     if not page.exists:
-        log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", config.target_page)
+        log.error("Target page '%s' does not exist. Create it first with the 'Last updated:' line.", target_page)
         return 2
 
     # Parse existing page content
     text = page.text()
     last_updated_dt = extract_last_updated(text)
     if not last_updated_dt:
-        log.error("Could not find 'Last updated: ... (UTC)' line at top of '%s'", config.target_page)
+        log.error("Could not find 'Last updated: ... (UTC)' line at top of '%s'", target_page)
         return 2
 
     existing_logids = extract_existing_logids(text)
@@ -527,7 +543,7 @@ def main() -> int:
 
     # Process new log entries
     new_entries, unclassified_by_admin = _process_new_log_entries(
-        site, ae_detector, last_updated_dt, existing_logids
+        site, detector, filter_fn, last_updated_dt, existing_logids
     )
 
     # Build updated page text
@@ -540,7 +556,7 @@ def main() -> int:
 
     # Save the updated page
     try:
-        _save_page_update(site, config.target_page, new_text, new_entries, base_revid)
+        _save_page_update(site, target_page, new_text, new_entries, base_revid)
     except mwclient.errors.EditError as e:
         log.error("Failed to save page due to edit conflict or error: %s", e)
         log.error("Another user may have edited the page. Please re-run the bot.")
@@ -553,6 +569,58 @@ def main() -> int:
         _notify_admins(site, unclassified_by_admin, token, bot_usernames, config)
     else:
         log.info("Notify-admin module: nothing to notify.")
+
+    return 0
+
+
+def main() -> int:
+    """
+    Main entry point for the ClerkBot protection log updater.
+
+    Runs the AE pipeline (always), then the GS pipeline (if configured).
+
+    Returns:
+        0 on success, 2 on configuration/setup error, 1 on API error
+    """
+    # Load topic detection data
+    try:
+        ae_detector, gs_detector = load_topics(config.config_url, config.user_agent)
+    except Exception as error:
+        log.error("Failed to load CTOP topics configuration from '%s': %s", config.config_url, error)
+        return 2
+
+    # Connect to Wikipedia and load shared data
+    site = connect_site(config)
+    bot_usernames = fetch_bot_usernames(site)
+
+    # AE pipeline (always runs)
+    ae_result = _run_pipeline(
+        site=site,
+        detector=ae_detector,
+        filter_fn=is_arbitration_enforcement,
+        target_page=config.target_page,
+        notify_mode=config.notify_mode,
+        dryrun_page=config.dryrun_page,
+        bot_usernames=bot_usernames,
+        config=config,
+    )
+    if ae_result != 0:
+        return ae_result
+
+    # GS pipeline (only if configured)
+    if config.gs_target_page:
+        gs_result = _run_pipeline(
+            site=site,
+            detector=gs_detector,
+            filter_fn=is_community_sanction,
+            target_page=config.gs_target_page,
+            notify_mode=config.gs_notify_mode,
+            dryrun_page=config.gs_dryrun_page,
+            bot_usernames=bot_usernames,
+            config=config,
+        )
+        if gs_result != 0:
+            return gs_result
 
     return 0
 
