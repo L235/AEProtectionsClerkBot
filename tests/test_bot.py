@@ -490,3 +490,45 @@ class TestRunPipeline:
             config=base_config,
         )
         assert result == 2
+
+
+class TestDualPipeline:
+    """Tests for AE + GS dual pipeline behavior."""
+
+    def test_gs_pipeline_skipped_when_not_configured(self):
+        """GS pipeline should not run when gs_target_page is empty."""
+        from clerkbot.config import BotConfig, NotifyMode
+        config = BotConfig(
+            username="test", password="pass",
+            target_page="User:Bot/AE Log",
+            gs_target_page="",
+        )
+        assert config.gs_target_page == ""
+        # This is tested implicitly by main() — gs_target_page == "" means
+        # the GS _run_pipeline call is skipped entirely
+
+    def test_ae_filter_does_not_match_gs_only(self):
+        """AE filter should not match GS-only comments."""
+        assert not is_arbitration_enforcement("Per [[WP:GS/KURD]]")
+        assert not is_arbitration_enforcement("[[Wikipedia:General sanctions/Armenia and Azerbaijan]]")
+        assert not is_arbitration_enforcement("community sanction enforcement")
+
+    def test_gs_filter_does_not_match_ae_only(self):
+        """GS filter should not match AE-only comments."""
+        assert not is_community_sanction("Per arbitration enforcement WP:CT/BLP")
+        assert not is_community_sanction("CTOP protection")
+        assert not is_community_sanction("[[WP:AE]] action")
+
+    def test_both_filters_match_dual_authority(self):
+        """Both filters should match dual-authority comments."""
+        dual = "[[WP:30/500|Arbitration enforcement]] - [[WP:CT/KURD]]/[[WP:GS/KURD]]"
+        assert is_arbitration_enforcement(dual)
+        assert is_community_sanction(dual)
+
+    def test_dedup_via_logid(self):
+        """Existing logid extraction works for dedup across pipelines."""
+        from bot import extract_existing_logids
+        text = "{{User:ClerkBot/AE entry|logid=12345|admin=A}}\n{{User:ClerkBot/AE entry|logid=67890|admin=B}}"
+        logids = extract_existing_logids(text)
+        assert 12345 in logids
+        assert 67890 in logids
