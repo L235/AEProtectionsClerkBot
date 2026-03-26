@@ -38,6 +38,9 @@ class BotConfig:
         notify_mode: Admin notification mode (DISABLED/DEBUG/ENABLED)
         dryrun_page: Page for debug notifications
         log_level: Logging level (default: "INFO")
+        gs_target_page: Target wiki page for GS entries (CLERKBOT_GS_TARGET_PAGE), empty = disabled
+        gs_notify_mode: GS notification mode (default: DISABLED)
+        gs_dryrun_page: Page for GS debug notifications
     """
     # Required fields
     username: str
@@ -81,6 +84,9 @@ class BotConfig:
             CLERKBOT_NOTIFY_ADMINS (optional: "false", "debug", "true")
             CLERKBOT_NOTIFICATIONS_DRYRUN_PAGE (optional)
             CLERKBOT_LOG_LEVEL (optional, default: "INFO")
+            CLERKBOT_GS_TARGET_PAGE (optional, default: "" = GS disabled)
+            CLERKBOT_GS_NOTIFY_ADMINS (optional: "false", "debug", "true", default: "false")
+            CLERKBOT_GS_NOTIFICATIONS_DRYRUN_PAGE (optional)
 
         Returns:
             BotConfig instance

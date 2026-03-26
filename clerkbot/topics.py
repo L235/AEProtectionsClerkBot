@@ -1,5 +1,5 @@
 """
-Topic detection for CTOP (Contentious Topic) codes.
+Topic detection for CTOP (Contentious Topic) and GS (General Sanctions) codes.
 
 Provides TopicDetector class that detects topic codes from edit summaries
 using multiple heuristics in priority order.

@@ -1,8 +1,8 @@
 """
-Filtering logic for arbitration enforcement detection.
+Filtering logic for arbitration enforcement and community sanctions detection.
 
 Provides functions to detect whether a protection action is related to
-arbitration enforcement based on edit summary keywords.
+arbitration enforcement or community general sanctions based on edit summary keywords.
 """
 
 # AE trigger phrases (case-insensitive) to detect arbitration enforcement
