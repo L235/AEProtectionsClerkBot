@@ -38,7 +38,37 @@ def is_arbitration_enforcement(comment: str) -> bool:
     return any(trigger in comment_lower for trigger in AE_TRIGGERS)
 
 
+GS_TRIGGERS = [
+    "general sanction",
+    "community sanction",
+    "community-designated contentious topic",
+    "wp:gs/",
+    "wikipedia:gs/",
+    "wp:gs|",
+    "wikipedia:gs|",
+    "wp:gs]",
+    "wikipedia:gs]",
+    "wikipedia:general sanctions/",
+]
+
+
+def is_community_sanction(comment: str) -> bool:
+    """
+    Check if a protection action comment indicates a community general sanction.
+
+    Args:
+        comment: The edit summary or log comment to check
+
+    Returns:
+        True if the comment contains any GS trigger phrases, False otherwise
+    """
+    comment_lower = (comment or "").lower()
+    return any(trigger in comment_lower for trigger in GS_TRIGGERS)
+
+
 __all__ = [
     'AE_TRIGGERS',
     'is_arbitration_enforcement',
+    'GS_TRIGGERS',
+    'is_community_sanction',
 ]
