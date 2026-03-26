@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-ClerkBot - AE protection actions logger
+ClerkBot - AE and GS protection actions logger
 
-This system monitors Wikipedia's protection log for arbitration enforcement (AE) actions
-and automatically appends them to a designated tracking page. It serves as an automated
-logging mechanism for Wikipedia administrators to maintain a centralized record of
-protection actions taken under arbitration enforcement authority.
+This system monitors Wikipedia's protection log for arbitration enforcement (AE) and
+community general sanctions (GS) actions and automatically appends them to designated
+tracking pages. It serves as an automated logging mechanism for Wikipedia administrators
+to maintain centralized records of protection actions taken under AE or GS authority.
 
 System Architecture:
 - Monitors MediaWiki's protection log (type=protect) and pending changes log (type=stable) via the API
@@ -39,6 +39,9 @@ Environment variables (all ASCII):
   CLERKBOT_CONFIG_URL         Optional. URL to fetch topics JSON (default: Wikipedia ClerkBot configuration URL)
   CLERKBOT_NOTIFY_ADMINS      Optional. Controls the notify-admin module. One of:
                               "false", "debug", or "true". Defaults to "debug" if unset/invalid.
+  CLERKBOT_GS_TARGET_PAGE        Optional. Target page for GS entries (empty = GS disabled)
+  CLERKBOT_GS_NOTIFY_ADMINS      Optional. Notification mode for GS pipeline ("false", "debug", "true")
+  CLERKBOT_GS_NOTIFICATIONS_DRYRUN_PAGE  Optional. Debug notification page for GS
 
 The target page must begin with a line like:
   Last updated: 19:32, 19 August 2025 (UTC)

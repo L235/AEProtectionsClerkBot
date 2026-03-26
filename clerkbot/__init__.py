@@ -1,9 +1,9 @@
 """
-ClerkBot - AE protection actions logger package.
+ClerkBot - AE and GS protection actions logger package.
 
 This package provides modules for monitoring Wikipedia's protection log for
-arbitration enforcement (AE) actions and automatically appending them to a
-designated tracking page.
+arbitration enforcement (AE) and community general sanctions (GS) actions
+and automatically appending them to designated tracking pages.
 """
 
 from clerkbot.config import BotConfig, NotifyMode
